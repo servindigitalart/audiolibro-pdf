@@ -1,0 +1,159 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: sonoro-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sonoro}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sonoro_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-sonoro}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sonoro}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sonoro-network
+
+  # Redis Cache & Message Broker
+  redis:
+    image: redis:7-alpine
+    container_name: sonoro-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - sonoro-network
+
+  # FastAPI Application
+  api:
+    build:
+      context: ./services/api
+      dockerfile: ../../infra/docker/api.Dockerfile
+    container_name: sonoro-api
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-sonoro}:${POSTGRES_PASSWORD:-sonoro_dev_password}@postgres:5432/${POSTGRES_DB:-sonoro}
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./services/api:/app
+    networks:
+      - sonoro-network
+    restart: unless-stopped
+
+  # Celery Worker (BLOCK 5B: Processing Orchestration)
+  worker:
+    build:
+      context: ./services/worker
+      dockerfile: ../../infra/docker/worker.Dockerfile
+    container_name: sonoro-worker
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-sonoro}:${POSTGRES_PASSWORD:-sonoro_dev_password}@postgres:5432/${POSTGRES_DB:-sonoro}
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    volumes:
+      - ./services/worker:/app/worker
+      - ./services/api/app:/app/api/app
+      - /tmp/sonoro:/tmp/sonoro
+    networks:
+      - sonoro-network
+    restart: unless-stopped
+    command: >
+      celery -A app.celery_app worker
+      --loglevel=info
+      --concurrency=2
+      --max-tasks-per-child=100
+      --queues=high_priority,normal,low_priority
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.celery_app inspect ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Prometheus - Metrics Collection
+  prometheus:
+    image: prom/prometheus:v2.48.1
+    container_name: sonoro-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - sonoro-network
+    restart: unless-stopped
+    depends_on:
+      - api
+
+  # Grafana - Metrics Visualization
+  grafana:
+    image: grafana/grafana:10.2.3
+    container_name: sonoro-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin  # CHANGE IN PRODUCTION
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3001
+    volumes:
+      - ./infra/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    networks:
+      - sonoro-network
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  sonoro-network:
+    driver: bridge

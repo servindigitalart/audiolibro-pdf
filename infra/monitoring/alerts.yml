@@ -1,0 +1,153 @@
+# ===========================================
+# Sonoro - Prometheus Alert Rules
+# ===========================================
+# Alert conditions for monitoring and incident response
+
+groups:
+  # API Health Alerts
+  - name: api_health
+    interval: 30s
+    rules:
+      # High error rate alert
+      - alert: HighErrorRate
+        expr: |
+          (
+            sum(rate(sonoro_http_requests_total{status=~"5.."}[5m]))
+            /
+            sum(rate(sonoro_http_requests_total[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+          
+      # High latency alert
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(sonoro_http_request_duration_seconds_bucket[5m])) by (le)
+          ) > 1.0
+        for: 5m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "High API latency detected"
+          description: "95th percentile latency is {{ $value }}s (threshold: 1s)"
+      
+      # API down alert
+      - alert: APIDown
+        expr: up{job="sonoro-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "Sonoro API is down"
+          description: "API has been unreachable for 1 minute"
+
+  # Database Alerts
+  - name: database_health
+    interval: 30s
+    rules:
+      # Database connection pool exhausted
+      - alert: DatabasePoolExhausted
+        expr: |
+          sonoro_db_connection_pool_checked_out 
+          >= 
+          (sonoro_db_connection_pool_size + sonoro_db_connection_pool_overflow) * 0.9
+        for: 2m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "Database connection pool near exhaustion"
+          description: "{{ $value }} connections checked out (90% of pool capacity)"
+      
+      # Database down
+      - alert: DatabaseDown
+        expr: sonoro_redis_connection_status == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "Database connection lost"
+          description: "Unable to connect to database for 1 minute"
+
+  # Redis Alerts
+  - name: redis_health
+    interval: 30s
+    rules:
+      # Redis down
+      - alert: RedisDown
+        expr: sonoro_redis_connection_status == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: redis
+        annotations:
+          summary: "Redis connection lost"
+          description: "Unable to connect to Redis for 1 minute"
+      
+      # High Redis latency
+      - alert: HighRedisLatency
+        expr: sonoro_redis_latency_seconds > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: redis
+        annotations:
+          summary: "High Redis latency"
+          description: "Redis latency is {{ $value }}s (threshold: 0.1s)"
+
+  # Authentication Alerts
+  - name: authentication_security
+    interval: 1m
+    rules:
+      # High login failure rate
+      - alert: HighLoginFailureRate
+        expr: |
+          rate(sonoro_auth_login_failures_total[1m]) > 50
+        for: 2m
+        labels:
+          severity: warning
+          component: auth
+          security: true
+        annotations:
+          summary: "High login failure rate detected"
+          description: "{{ $value }} login failures per minute (threshold: 50/min)"
+          action: "Possible brute force attack - investigate and consider blocking IPs"
+      
+      # Excessive registration rate
+      - alert: ExcessiveRegistrationRate
+        expr: |
+          rate(sonoro_auth_registrations_total{status="success"}[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: auth
+          security: true
+        annotations:
+          summary: "Unusually high registration rate"
+          description: "{{ $value }} registrations per minute (threshold: 10/min)"
+          action: "Possible bot activity - review recent registrations"
+
+  # Resource Alerts
+  - name: resource_utilization
+    interval: 1m
+    rules:
+      # High active requests
+      - alert: HighActiveRequests
+        expr: sonoro_active_requests > 100
+        for: 5m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "High number of concurrent requests"
+          description: "{{ $value }} active requests (threshold: 100)"
+          action: "Consider scaling up API instances"
