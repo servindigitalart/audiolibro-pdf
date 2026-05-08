@@ -10,7 +10,8 @@ from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from app.core import get_logger, redis_client
+from app.core import get_logger
+from app.core.redis import get_redis
 from app.monitoring.metrics import (
     db_connection_pool_size,
     db_connection_pool_overflow,
@@ -116,13 +117,13 @@ class MetricsCollector:
     async def _collect_redis_metrics(self) -> None:
         """Collect Redis connection and latency metrics."""
         try:
-            if not redis_client:
+            if not await get_redis():
                 redis_connection_status.set(0)
                 return
 
             # Measure Redis latency with PING
             start_time = time.time()
-            await redis_client.ping()
+            await (await get_redis()).ping()
             latency = time.time() - start_time
 
             redis_connection_status.set(1)  # Connected

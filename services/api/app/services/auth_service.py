@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.logging_config import get_logger
-from app.core.redis import redis_client
+from app.core.redis import get_redis
 from app.core.security import (
     hash_password,
     verify_password,
@@ -140,7 +140,7 @@ class AuthService:
         redis_key = f"refresh_token:{jti}"
         expire_seconds = settings.refresh_token_expire_days * 24 * 60 * 60
         
-        await redis_client.setex(
+        await (await get_redis()).setex(
             redis_key,
             expire_seconds,
             user_id_str
@@ -184,7 +184,7 @@ class AuthService:
         
         # Check if refresh token is blacklisted (exists in Redis)
         redis_key = f"refresh_token:{jti}"
-        stored_user_id = await redis_client.get(redis_key)
+        stored_user_id = await (await get_redis()).get(redis_key)
         
         if not stored_user_id:
             # Token has been used, revoked, or expired
@@ -220,7 +220,7 @@ class AuthService:
             )
         
         # Invalidate old refresh token (token rotation)
-        await redis_client.delete(redis_key)
+        await (await get_redis()).delete(redis_key)
         
         # Create new tokens
         new_access_token, new_refresh_token, new_jti = await AuthService.create_tokens(user_id)
@@ -256,7 +256,7 @@ class AuthService:
         
         # Remove refresh token from Redis
         redis_key = f"refresh_token:{jti}"
-        deleted = await redis_client.delete(redis_key)
+        deleted = await (await get_redis()).delete(redis_key)
         
         if deleted:
             logger.info(f"User logged out, token invalidated: {jti}")

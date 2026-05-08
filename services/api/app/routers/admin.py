@@ -13,7 +13,8 @@ from typing import Dict
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import get_logger, redis_client, settings
+from app.core import get_logger, settings
+from app.core.redis import get_redis
 from app.core.auth_dependencies import require_admin
 from app.db import get_db
 from app.db.models import User
@@ -120,8 +121,8 @@ async def detailed_health_check(
     
     # Check Redis
     try:
-        if redis_client:
-            await redis_client.ping()
+        if await get_redis():
+            await (await get_redis()).ping()
             services["redis"] = "healthy"
         else:
             services["redis"] = "unavailable"
@@ -169,7 +170,7 @@ async def _get_active_connections(db: AsyncSession) -> Dict[str, int]:
     
     try:
         # Redis connections
-        if redis_client:
+        if await get_redis():
             connections["redis"] = 1  # Single connection pool
         else:
             connections["redis"] = 0
