@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     debug: bool = Field(default=False, description="Debug mode")
     api_host: str = Field(default="0.0.0.0", description="API host")
     api_port: int = Field(default=8000, description="API port")
-    api_cors_origins: str = Field(
+    api_cors_origins: list[str] = Field(
         default="http://localhost:3000,http://localhost:8000",
         description="Comma-separated CORS origins",
     )
