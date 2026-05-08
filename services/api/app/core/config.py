@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     api_host: str = Field(default="0.0.0.0", description="API host")
     api_port: int = Field(default=8000, description="API port")
     api_cors_origins: list[str] = Field(
-        default="http://localhost:3000,http://localhost:8000",
+        default=["http://localhost:3000", "http://localhost:8000"],
         description="Comma-separated CORS origins",
     )
 
@@ -181,13 +181,6 @@ class Settings(BaseSettings):
         default="http://localhost:3000/billing", description="Billing portal return URL"
     )
 
-    @field_validator("api_cors_origins", mode="before")
-    @classmethod
-    def parse_cors_origins(cls, v: str) -> List[str]:
-        """Parse comma-separated CORS origins into a list."""
-        if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",") if origin.strip()]
-        return v
 
     @property
     def is_development(self) -> bool:
