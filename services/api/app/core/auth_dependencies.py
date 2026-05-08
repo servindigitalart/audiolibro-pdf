@@ -167,3 +167,6 @@ class RoleChecker:
                 detail="Insufficient permissions",
             )
         return current_user
+
+# Pre-configured role dependencies
+require_admin = RoleChecker(["admin"])
