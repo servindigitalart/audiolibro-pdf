@@ -45,6 +45,7 @@ class Settings(BaseSettings):
 
     # Database
     database_url: PostgresDsn = Field(..., description="PostgreSQL connection URL")
+    database_async_url: str = Field(..., description="Async PostgreSQL connection URL")
     db_pool_size: int = Field(default=10, description="Database connection pool size")
     db_max_overflow: int = Field(default=20, description="Database max overflow connections")
     db_pool_timeout: int = Field(default=30, description="Database pool timeout in seconds")

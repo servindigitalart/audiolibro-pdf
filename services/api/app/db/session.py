@@ -17,7 +17,7 @@ logger = get_logger(__name__)
 
 # Create async engine
 engine = create_async_engine(
-    str(settings.database_url),
+    str(settings.database_async_url),
     echo=settings.is_development,  # Log SQL in development
     pool_size=settings.db_pool_size,
     max_overflow=settings.db_max_overflow,
