@@ -17,6 +17,7 @@ logger = get_logger(__name__)
 # Global Redis client instance
 _redis_client: Optional[Redis] = None
 
+redis_client = None
 
 async def get_redis() -> Redis:
     """
@@ -30,7 +31,7 @@ async def get_redis() -> Redis:
         await redis_client.set("key", "value")
         value = await redis_client.get("key")
     """
-    global _redis_client
+    global _redis_client, redis_client
 
     if _redis_client is None:
         raise RuntimeError("Redis client not initialized. Call init_redis() first.")
@@ -43,7 +44,7 @@ async def init_redis() -> None:
     Initialize Redis connection pool.
     Called during application startup.
     """
-    global _redis_client
+    global _redis_client, redis_client
 
     try:
         _redis_client = redis.from_url(
@@ -52,6 +53,7 @@ async def init_redis() -> None:
             decode_responses=True,
             max_connections=10,
         )
+        redis_client = _redis_client
 
         # Test connection
         await _redis_client.ping()
@@ -66,7 +68,7 @@ async def close_redis() -> None:
     Close Redis connection pool.
     Called during application shutdown.
     """
-    global _redis_client
+    global _redis_client, redis_client
 
     if _redis_client:
         await _redis_client.close()
