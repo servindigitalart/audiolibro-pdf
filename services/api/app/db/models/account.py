@@ -147,7 +147,7 @@ class UserActivityLog(Base):
     )
     
     # Metadata
-    metadata: Mapped[Optional[dict]] = mapped_column(
+    activity_metadata: Mapped[Optional[dict]] = mapped_column("metadata",
         JSON,
         nullable=True,
     )
