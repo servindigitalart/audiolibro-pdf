@@ -89,3 +89,6 @@ async def close_db() -> None:
     """
     await engine.dispose()
     logger.info("Database connection closed")
+
+# Backwards compatibility alias
+get_async_db = get_db
