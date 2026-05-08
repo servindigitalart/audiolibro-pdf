@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth_dependencies import require_admin
-from app.core.logging import get_logger
+from app.core.logging_config import get_logger
 from app.db.models.user import User
 from app.db.session import get_db
 from app.financial.cost.cost_tracker import CostTracker

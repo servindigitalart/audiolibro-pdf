@@ -14,7 +14,7 @@ from redis.asyncio import Redis
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.logging import get_logger
+from app.core.logging_config import get_logger
 from app.financial.cost.cost_models import CostEvent
 from app.monitoring.metrics import metrics_registry
 
