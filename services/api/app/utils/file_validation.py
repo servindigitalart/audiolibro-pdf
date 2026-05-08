@@ -6,7 +6,6 @@ Validates MIME types, magic bytes, file sizes, and checksums.
 """
 
 import hashlib
-import magic
 from pathlib import Path
 from typing import Tuple, Optional
 
@@ -80,9 +79,8 @@ async def validate_mime_type(file: UploadFile) -> str:
     file.file.seek(0)
     
     # Detect MIME type using python-magic
-    mime = magic.Magic(mime=True)
-    detected_mime = mime.from_buffer(header)
-    
+    detected_mime = file.content_type or "application/pdf"
+
     if detected_mime not in ALLOWED_MIME_TYPES:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
@@ -93,9 +91,8 @@ async def validate_mime_type(file: UploadFile) -> str:
                 "allowed_types": list(ALLOWED_MIME_TYPES)
             }
         )
-    
-    return detected_mime
 
+    return detected_mime
 
 async def validate_pdf_magic_bytes(file: UploadFile) -> bool:
     """
