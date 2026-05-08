@@ -88,7 +88,7 @@ class CostEvent(Base):
     )
     
     # Metadata
-    metadata = Column(
+    activity_metadata = Column("metadata",
         JSON,
         nullable=True,
         comment="Additional context (job_id, file_name, etc.)",
