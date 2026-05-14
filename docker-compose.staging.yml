@@ -1,0 +1,111 @@
+version: '3.8'
+
+# Staging environment — mirrors production topology but runs locally or on a staging host.
+# Uses the `production` Dockerfile target (gunicorn, non-root user, no hot-reload).
+#
+# Usage:
+#   docker compose -f docker-compose.staging.yml --env-file .env.staging up -d
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sonoro-staging-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sonoro}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-sonoro_staging}
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_staging_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sonoro}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sonoro-staging
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: sonoro-staging-redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_staging_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - sonoro-staging
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./services/api
+      dockerfile: ../../infra/docker/api.Dockerfile
+      target: production
+    image: sonoro-api:staging
+    container_name: sonoro-staging-api
+    env_file:
+      - .env.staging
+    environment:
+      APP_ENV: staging
+      DATABASE_URL: postgresql://${POSTGRES_USER:-sonoro}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sonoro_staging}
+      DATABASE_ASYNC_URL: postgresql+asyncpg://${POSTGRES_USER:-sonoro}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sonoro_staging}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/2
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8001:8000"
+    networks:
+      - sonoro-staging
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 3
+
+  # Database migration runner — exits after completion
+  migrate:
+    build:
+      context: ./services/api
+      dockerfile: ../../infra/docker/api.Dockerfile
+      target: production
+    image: sonoro-api:staging
+    container_name: sonoro-staging-migrate
+    env_file:
+      - .env.staging
+    environment:
+      APP_ENV: staging
+      DATABASE_URL: postgresql://${POSTGRES_USER:-sonoro}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sonoro_staging}
+      DATABASE_ASYNC_URL: postgresql+asyncpg://${POSTGRES_USER:-sonoro}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sonoro_staging}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - sonoro-staging
+    command: ["alembic", "upgrade", "head"]
+    profiles:
+      - migrate
+
+volumes:
+  postgres_staging_data:
+    driver: local
+  redis_staging_data:
+    driver: local
+
+networks:
+  sonoro-staging:
+    driver: bridge

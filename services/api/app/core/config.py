@@ -73,6 +73,12 @@ class Settings(BaseSettings):
         default=False, description="Enable email verification"
     )
     feature_rate_limiting: bool = Field(default=False, description="Enable rate limiting")
+    feature_document_upload: bool = Field(default=False, description="Enable document upload")
+    feature_tts_processing: bool = Field(default=False, description="Enable TTS processing")
+    feature_stripe_billing: bool = Field(default=False, description="Enable Stripe billing")
+    feature_abuse_detection: bool = Field(default=False, description="Enable abuse detection")
+    feature_request_tracing: bool = Field(default=False, description="Enable request ID tracing")
+    feature_billing_enforcement: bool = Field(default=False, description="Enable billing quota enforcement middleware")
 
     # Cost Governance & Runtime Protection
     hard_cost_limit_enabled: bool = Field(
@@ -151,6 +157,10 @@ class Settings(BaseSettings):
     )
 
     # Stripe Billing (BLOCK 7)
+    stripe_mode: str = Field(
+        default="mock",
+        description="Stripe provider mode: 'mock' (tests/dev) or 'real' (production)",
+    )
     stripe_secret_key: str = Field(
         default="", description="Stripe secret API key"
     )

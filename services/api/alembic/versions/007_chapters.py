@@ -13,8 +13,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers
-revision = '007'
-down_revision = '006'
+revision = '007_chapters'
+down_revision = '006_processing_jobs'
 branch_labels = None
 depends_on = None
 

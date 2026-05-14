@@ -168,5 +168,31 @@ class RoleChecker:
             )
         return current_user
 
+async def get_current_user_optional(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(
+        HTTPBearer(auto_error=False)
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> Optional[User]:
+    """
+    Like get_current_user but returns None instead of 401 when no token present.
+    Used for endpoints that are accessible both authenticated and anonymously.
+    """
+    if credentials is None:
+        return None
+    try:
+        payload = verify_token(credentials.credentials, token_type="access")
+        if not payload:
+            return None
+        user_id_str = payload.get("sub")
+        if not user_id_str:
+            return None
+        user_id = UUID(user_id_str)
+        result = await db.execute(select(User).where(User.id == user_id))
+        return result.scalar_one_or_none()
+    except Exception:
+        return None
+
+
 # Pre-configured role dependencies
 require_admin = RoleChecker(["admin"])

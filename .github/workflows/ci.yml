@@ -1,0 +1,213 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "develop"]
+  pull_request:
+    branches: ["main", "develop"]
+
+defaults:
+  run:
+    working-directory: services/api
+
+jobs:
+  # ── Unit tests — fast, no external services ──────────────────────────────────
+  unit-tests:
+    name: Unit Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: true
+      matrix:
+        python-version: ["3.11"]
+
+    env:
+      # Minimum fields required by pydantic Settings at import time.
+      # Integration values are format-valid but never connected to.
+      SECRET_KEY: "ci-test-secret-key-must-be-at-least-32-characters-long"
+      DATABASE_URL: "postgresql://sonoro:sonoro_dev_password@localhost:5432/sonoro_test"
+      DATABASE_ASYNC_URL: "postgresql+asyncpg://sonoro:sonoro_dev_password@localhost:5432/sonoro_test"
+      REDIS_URL: "redis://localhost:6379/0"
+      CELERY_BROKER_URL: "redis://localhost:6379/0"
+      CELERY_RESULT_BACKEND: "redis://localhost:6379/0"
+      APP_ENV: "test"
+      DEBUG: "false"
+      LOG_FORMAT: "text"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ matrix.python-version }}-${{ hashFiles('services/api/requirements.txt', 'services/api/requirements-test.txt') }}
+          restore-keys: |
+            pip-${{ matrix.python-version }}-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-test.txt
+
+      - name: Run unit tests
+        run: |
+          pytest tests/unit/ \
+            -m unit \
+            --tb=short \
+            -v
+
+  # ── Integration tests — require PostgreSQL ────────────────────────────────────
+  integration-tests:
+    name: Integration Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: true
+      matrix:
+        python-version: ["3.11"]
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: sonoro
+          POSTGRES_PASSWORD: sonoro_dev_password
+          POSTGRES_DB: sonoro_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sonoro"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      SECRET_KEY: "ci-test-secret-key-must-be-at-least-32-characters-long"
+      DATABASE_URL: "postgresql://sonoro:sonoro_dev_password@localhost:5432/sonoro_test"
+      DATABASE_ASYNC_URL: "postgresql+asyncpg://sonoro:sonoro_dev_password@localhost:5432/sonoro_test"
+      REDIS_URL: "redis://localhost:6379/0"
+      CELERY_BROKER_URL: "redis://localhost:6379/0"
+      CELERY_RESULT_BACKEND: "redis://localhost:6379/0"
+      APP_ENV: "test"
+      DEBUG: "false"
+      LOG_FORMAT: "text"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ matrix.python-version }}-${{ hashFiles('services/api/requirements.txt', 'services/api/requirements-test.txt') }}
+          restore-keys: |
+            pip-${{ matrix.python-version }}-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-test.txt
+
+      - name: Wait for PostgreSQL
+        run: |
+          until pg_isready -h localhost -p 5432 -U sonoro; do
+            echo "Waiting for PostgreSQL…"
+            sleep 1
+          done
+
+      - name: Run integration tests with coverage
+        run: |
+          pytest \
+            tests/test_auth.py \
+            tests/test_health.py \
+            tests/integration/ \
+            -m integration \
+            --cov=app \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml \
+            --cov-fail-under=60 \
+            --tb=short \
+            -v
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          file: services/api/coverage.xml
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # ── Full suite — coverage gate ────────────────────────────────────────────────
+  full-coverage:
+    name: Full Test Suite + Coverage Gate
+    runs-on: ubuntu-latest
+    needs: [unit-tests]   # unit tests must pass first (fast gate)
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: sonoro
+          POSTGRES_PASSWORD: sonoro_dev_password
+          POSTGRES_DB: sonoro_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sonoro"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      SECRET_KEY: "ci-test-secret-key-must-be-at-least-32-characters-long"
+      DATABASE_URL: "postgresql://sonoro:sonoro_dev_password@localhost:5432/sonoro_test"
+      DATABASE_ASYNC_URL: "postgresql+asyncpg://sonoro:sonoro_dev_password@localhost:5432/sonoro_test"
+      REDIS_URL: "redis://localhost:6379/0"
+      CELERY_BROKER_URL: "redis://localhost:6379/0"
+      CELERY_RESULT_BACKEND: "redis://localhost:6379/0"
+      APP_ENV: "test"
+      DEBUG: "false"
+      LOG_FORMAT: "text"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-3.11-${{ hashFiles('services/api/requirements.txt', 'services/api/requirements-test.txt') }}
+          restore-keys: |
+            pip-3.11-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-test.txt
+
+      - name: Wait for PostgreSQL
+        run: |
+          until pg_isready -h localhost -p 5432 -U sonoro; do
+            echo "Waiting for PostgreSQL…"
+            sleep 1
+          done
+
+      - name: Run full suite with coverage gate
+        run: |
+          pytest \
+            --cov=app \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml \
+            --cov-fail-under=70 \
+            -v

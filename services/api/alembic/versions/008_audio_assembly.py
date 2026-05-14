@@ -14,7 +14,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers
 revision = '008'
-down_revision = '007'
+down_revision = '007_chapters'
 branch_labels = None
 depends_on = None
 

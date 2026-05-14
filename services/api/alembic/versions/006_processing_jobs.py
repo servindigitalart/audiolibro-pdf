@@ -25,7 +25,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = '006_processing_jobs'
-down_revision: Union[str, None] = '005_document_storage'
+down_revision = '005_document_storage'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -41,7 +41,6 @@ def upgrade() -> None:
         name='jobtype',
         create_type=True
     )
-    job_type_enum.create(op.get_bind())
     
     # Create job status enum
     job_status_enum = postgresql.ENUM(
@@ -53,7 +52,6 @@ def upgrade() -> None:
         name='jobstatus',
         create_type=True
     )
-    job_status_enum.create(op.get_bind())
     
     # Create processing_jobs table
     op.create_table(

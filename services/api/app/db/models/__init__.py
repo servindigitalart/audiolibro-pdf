@@ -10,6 +10,12 @@ from app.db.models.document import Document, UploadStatus, ProcessingStatus
 from app.db.models.processing_job import ProcessingJob, JobType, JobStatus
 from app.db.models.chapter import Chapter
 from app.financial.cost.cost_models import CostEvent, UsageQuota
+from app.billing.models import (
+    SubscriptionAuditLog,
+    UsageAggregate,
+    IdempotencyKey,
+    WebhookEvent,
+)
 
 __all__ = [
     "User",
@@ -24,4 +30,8 @@ __all__ = [
     "Chapter",
     "CostEvent",
     "UsageQuota",
+    "SubscriptionAuditLog",
+    "UsageAggregate",
+    "IdempotencyKey",
+    "WebhookEvent",
 ]

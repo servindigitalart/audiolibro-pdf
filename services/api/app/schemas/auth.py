@@ -51,9 +51,16 @@ class RegisterRequest(BaseModel):
 
 class LoginRequest(BaseModel):
     """User login request."""
-    
+
     email: EmailStr = Field(..., description="User email address")
     password: str = Field(..., description="User password")
+
+    @field_validator("password")
+    @classmethod
+    def reject_null_bytes(cls, v: str) -> str:
+        if "\x00" in v:
+            raise ValueError("Invalid password")
+        return v
 
 
 class TokenResponse(BaseModel):

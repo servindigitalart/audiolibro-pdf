@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
-from app.core import settings, setup_logging, get_logger
+from app.core import settings, setup_logging, get_logger, RequestIDMiddleware
 from app.core.redis import init_redis, close_redis
 from app.db import init_db, close_db, engine
 from app.routers import health_router, auth_router
@@ -95,7 +95,10 @@ app = FastAPI(
     debug=settings.debug,
 )
 
-# Add Metrics Middleware (first, to capture all requests)
+# RequestID is outermost so every downstream layer (metrics, routes) can read it
+app.add_middleware(RequestIDMiddleware)
+
+# Metrics middleware captures all requests including timing
 app.add_middleware(MetricsMiddleware)
 
 # CORS Middleware
@@ -141,6 +144,14 @@ from app.routers.account import router as account_router
 from app.routers.documents import router as documents_router  # BLOCK 5A
 from app.routers.processing import router as processing_router  # BLOCK 5B
 from app.routers.billing import router as billing_router  # BLOCK 7
+from app.billing.router import router as internal_billing_router
+from app.billing.middleware import BillingEnforcementMiddleware
+from app.routers.events import router as events_router  # Analytics event ingestion
+from app.pricing.router import public_router as pricing_public_router  # Pricing tier catalog
+from app.pricing.router import internal_router as pricing_internal_router  # Admin pricing
+
+# Billing enforcement middleware — feature-flagged, defaults off so existing tests pass
+app.add_middleware(BillingEnforcementMiddleware)
 
 app.include_router(metrics_router)  # Prometheus metrics endpoint
 app.include_router(health_router)
@@ -150,7 +161,11 @@ app.include_router(admin_financial_router)  # Admin financial management
 app.include_router(account_router)  # Account & user experience
 app.include_router(documents_router)  # Document upload & storage
 app.include_router(processing_router)  # Processing orchestration
-app.include_router(billing_router)  # Billing & subscriptions
+app.include_router(billing_router)  # Billing & subscriptions (Stripe-facing)
+app.include_router(internal_billing_router)  # Internal billing engine API
+app.include_router(events_router)  # Frontend analytics event ingestion
+app.include_router(pricing_public_router)  # Public pricing tier catalog
+app.include_router(pricing_internal_router)  # Admin pricing + economics
 
 
 # Startup event log

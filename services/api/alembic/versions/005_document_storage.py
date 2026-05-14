@@ -25,7 +25,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = '005_document_storage'
-down_revision: Union[str, None] = '004_account_domain'
+down_revision = '004_account_domain'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -41,7 +41,6 @@ def upgrade() -> None:
         name='uploadstatus',
         create_type=True
     )
-    upload_status_enum.create(op.get_bind())
     
     # Create processing status enum
     processing_status_enum = postgresql.ENUM(
@@ -53,7 +52,6 @@ def upgrade() -> None:
         name='processingstatus',
         create_type=True
     )
-    processing_status_enum.create(op.get_bind())
     
     # Create documents table
     op.create_table(

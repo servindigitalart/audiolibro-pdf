@@ -1,0 +1,209 @@
+name: Deploy to Staging
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Force deploy even if tests fail"
+        required: false
+        default: "false"
+
+defaults:
+  run:
+    working-directory: services/api
+
+jobs:
+  # ── Gate: unit tests must pass ────────────────────────────────────────────────
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+
+    env:
+      SECRET_KEY: "ci-test-secret-key-must-be-at-least-32-characters-long"
+      DATABASE_URL: "postgresql://sonoro:sonoro_dev_password@localhost:5432/sonoro_test"
+      DATABASE_ASYNC_URL: "postgresql+asyncpg://sonoro:sonoro_dev_password@localhost:5432/sonoro_test"
+      REDIS_URL: "redis://localhost:6379/0"
+      CELERY_BROKER_URL: "redis://localhost:6379/0"
+      CELERY_RESULT_BACKEND: "redis://localhost:6379/0"
+      APP_ENV: "test"
+      DEBUG: "false"
+      LOG_FORMAT: "text"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-3.11-${{ hashFiles('services/api/requirements.txt', 'services/api/requirements-test.txt') }}
+          restore-keys: pip-3.11-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-test.txt
+
+      - name: Run unit tests
+        run: pytest tests/unit/ -m unit --tb=short -q
+
+  # ── Gate: integration tests ───────────────────────────────────────────────────
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: sonoro
+          POSTGRES_PASSWORD: sonoro_dev_password
+          POSTGRES_DB: sonoro_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sonoro"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      SECRET_KEY: "ci-test-secret-key-must-be-at-least-32-characters-long"
+      DATABASE_URL: "postgresql://sonoro:sonoro_dev_password@localhost:5432/sonoro_test"
+      DATABASE_ASYNC_URL: "postgresql+asyncpg://sonoro:sonoro_dev_password@localhost:5432/sonoro_test"
+      REDIS_URL: "redis://localhost:6379/0"
+      CELERY_BROKER_URL: "redis://localhost:6379/0"
+      CELERY_RESULT_BACKEND: "redis://localhost:6379/0"
+      APP_ENV: "test"
+      DEBUG: "false"
+      LOG_FORMAT: "text"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-3.11-${{ hashFiles('services/api/requirements.txt', 'services/api/requirements-test.txt') }}
+          restore-keys: pip-3.11-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-test.txt
+
+      - name: Wait for PostgreSQL
+        run: until pg_isready -h localhost -p 5432 -U sonoro; do sleep 1; done
+
+      - name: Run integration tests
+        run: |
+          pytest tests/integration/ tests/test_auth.py tests/test_health.py \
+            -m integration \
+            --tb=short -q
+
+  # ── Build & push Docker image ─────────────────────────────────────────────────
+  build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests]
+    if: ${{ github.event.inputs.force == 'true' || success() }}
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.REGISTRY_HOST }}
+          username: ${{ secrets.REGISTRY_USER }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
+
+      - name: Set image metadata
+        id: meta
+        run: |
+          SHA="${{ github.sha }}"
+          TAG="staging-${SHA::8}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "image=${{ secrets.REGISTRY_HOST }}/sonoro-api:${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: services/api
+          file: infra/docker/api.Dockerfile
+          target: production
+          push: true
+          tags: |
+            ${{ secrets.REGISTRY_HOST }}/sonoro-api:${{ steps.meta.outputs.tag }}
+            ${{ secrets.REGISTRY_HOST }}/sonoro-api:staging-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── Deploy to staging ─────────────────────────────────────────────────────────
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build]
+    environment: staging
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.STAGING_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.STAGING_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Run database migrations
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.STAGING_USER }}@${{ secrets.STAGING_HOST }} \
+            "docker run --rm \
+              --env-file /etc/sonoro/.env.staging \
+              ${{ secrets.REGISTRY_HOST }}/sonoro-api:${{ needs.build.outputs.image_tag }} \
+              alembic upgrade head"
+
+      - name: Deploy API container
+        run: |
+          IMAGE="${{ secrets.REGISTRY_HOST }}/sonoro-api:${{ needs.build.outputs.image_tag }}"
+          ssh -i ~/.ssh/deploy_key ${{ secrets.STAGING_USER }}@${{ secrets.STAGING_HOST }} "
+            docker pull ${IMAGE}
+            docker stop sonoro-staging-api 2>/dev/null || true
+            docker rm   sonoro-staging-api 2>/dev/null || true
+            docker run -d \
+              --name sonoro-staging-api \
+              --restart unless-stopped \
+              --env-file /etc/sonoro/.env.staging \
+              -p 8000:8000 \
+              ${IMAGE}
+            echo ${IMAGE} > /etc/sonoro/last_deployed_staging
+          "
+
+      - name: Health check
+        run: |
+          for i in {1..12}; do
+            STATUS=$(ssh -i ~/.ssh/deploy_key ${{ secrets.STAGING_USER }}@${{ secrets.STAGING_HOST }} \
+              "curl -sf http://localhost:8000/api/v1/health | python3 -c \"import sys,json; print(json.load(sys.stdin).get('status',''))\" 2>/dev/null" || echo "")
+            if [[ "${STATUS}" == "healthy" ]]; then
+              echo "✅ Staging deployment succeeded"
+              exit 0
+            fi
+            echo "Waiting for healthy status… (${i}/12)"
+            sleep 5
+          done
+          echo "❌ Health check failed"
+          exit 1
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "Staging deployment failed for ${{ github.sha }}. Check logs above."
+          # Add Slack/PagerDuty notification here if desired

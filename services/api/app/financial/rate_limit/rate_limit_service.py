@@ -291,7 +291,7 @@ class RateLimitService:
         endpoint: Optional[str] = None,
     ) -> str:
         """Generate Redis key for rate limit tracking."""
-        base = f"ratelimit:{tier}:{user_id}:{window}"
+        base = f"ratelimit:{tier.value}:{user_id}:{window}"
         if endpoint:
             return f"{base}:{endpoint}"
         return base

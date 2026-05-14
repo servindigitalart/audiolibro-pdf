@@ -104,14 +104,60 @@ def setup_logging() -> None:
     )
 
 
-def get_logger(name: str) -> logging.Logger:
+_STDLIB_LOG_KWARGS = frozenset({"exc_info", "stack_info", "stacklevel"})
+
+
+class BoundLogger:
     """
-    Get a logger instance for a specific module.
+    Thin wrapper that lets callers pass structured fields as keyword arguments,
+    matching the structlog calling convention without requiring structlog.
+
+    Example:
+        logger.warning("rate_limit_exceeded", user_id=uid, tier=tier)
+        logger.error("something broke", exc_info=True)
+    """
+
+    def __init__(self, logger: logging.Logger) -> None:
+        self._logger = logger
+
+    def _split(self, kwargs: dict) -> tuple[str, dict]:
+        """Split kwargs into (rendered structured fields string, stdlib log kwargs)."""
+        stdlib_kw = {k: v for k, v in kwargs.items() if k in _STDLIB_LOG_KWARGS}
+        struct_kw = {k: v for k, v in kwargs.items() if k not in _STDLIB_LOG_KWARGS}
+        rendered = " ".join(f"{k}={v!r}" for k, v in struct_kw.items())
+        return rendered, stdlib_kw
+
+    def _emit(self, level: int, msg: str, kwargs: dict) -> None:
+        if not self._logger.isEnabledFor(level):
+            return
+        extra, stdlib_kw = self._split(kwargs)
+        full_msg = f"{msg} {extra}" if extra else msg
+        self._logger.log(level, full_msg, **stdlib_kw)
+
+    def debug(self, msg: str, **kwargs) -> None:
+        self._emit(logging.DEBUG, msg, kwargs)
+
+    def info(self, msg: str, **kwargs) -> None:
+        self._emit(logging.INFO, msg, kwargs)
+
+    def warning(self, msg: str, **kwargs) -> None:
+        self._emit(logging.WARNING, msg, kwargs)
+
+    def error(self, msg: str, **kwargs) -> None:
+        self._emit(logging.ERROR, msg, kwargs)
+
+    def critical(self, msg: str, **kwargs) -> None:
+        self._emit(logging.CRITICAL, msg, kwargs)
+
+
+def get_logger(name: str) -> BoundLogger:
+    """
+    Get a structured-field-aware logger for a module.
 
     Args:
         name: Logger name (usually __name__)
 
     Returns:
-        Logger instance
+        BoundLogger wrapping a stdlib Logger
     """
-    return logging.getLogger(f"sonoro.{name}")
+    return BoundLogger(logging.getLogger(f"sonoro.{name}"))

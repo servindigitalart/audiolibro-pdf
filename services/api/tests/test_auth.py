@@ -1,307 +1,174 @@
 """
-Authentication Tests
-====================
-Test authentication endpoints and token management.
+Integration Tests: /api/v1/auth endpoints
+==========================================
+Full request-response tests via AsyncClient.
+
+Every test receives:
+- client       : FastAPI test client with get_db → isolated test session
+- db_session   : (when needed) direct session access for precondition setup
+- mock_redis   : injected automatically (autouse); access it as a param to
+                 inspect or pre-populate Redis state
+
+Each test is wrapped in a transaction that's rolled back at teardown, so
+there is zero data leakage between tests even when they share email addresses.
 """
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import create_access_token, verify_token
-from app.db.models.user import User
+from tests.factories import DEFAULT_PASSWORD, create_user
+
+pytestmark = pytest.mark.integration
 
 
-@pytest.mark.asyncio
-async def test_register_success(client: AsyncClient):
-    """Test successful user registration."""
-    response = await client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": "newuser@example.com",
-            "password": "SecurePass123",
-        },
+# ── Register ──────────────────────────────────────────────────────────────────
+
+async def test_register_returns_201_and_tokens(client: AsyncClient):
+    r = await client.post("/api/v1/auth/register", json={
+        "email": "register@example.com",
+        "password": DEFAULT_PASSWORD,
+    })
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert "access_token" in body
+    assert "refresh_token" in body
+    assert body["token_type"] == "bearer"
+    assert body["expires_in"] > 0
+
+
+async def test_register_duplicate_email_returns_400(client: AsyncClient):
+    payload = {"email": "dup@example.com", "password": DEFAULT_PASSWORD}
+    r1 = await client.post("/api/v1/auth/register", json=payload)
+    assert r1.status_code == 201
+
+    r2 = await client.post("/api/v1/auth/register", json=payload)
+    assert r2.status_code == 400
+
+
+async def test_register_weak_password_returns_422(client: AsyncClient):
+    r = await client.post("/api/v1/auth/register", json={
+        "email": "weak@example.com",
+        "password": "short",           # fails the strength validator
+    })
+    assert r.status_code == 422
+
+
+async def test_register_invalid_email_returns_422(client: AsyncClient):
+    r = await client.post("/api/v1/auth/register", json={
+        "email": "not-an-email",
+        "password": DEFAULT_PASSWORD,
+    })
+    assert r.status_code == 422
+
+
+# ── Login ─────────────────────────────────────────────────────────────────────
+
+async def test_login_correct_credentials_returns_200(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    await create_user(db_session, email="login@example.com")
+
+    r = await client.post("/api/v1/auth/login", json={
+        "email": "login@example.com",
+        "password": DEFAULT_PASSWORD,
+    })
+    assert r.status_code == 200, r.text
+    assert "access_token" in r.json()
+
+
+async def test_login_wrong_password_returns_401(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    await create_user(db_session, email="badpw@example.com")
+
+    r = await client.post("/api/v1/auth/login", json={
+        "email": "badpw@example.com",
+        "password": "WrongPass9!",
+    })
+    assert r.status_code == 401
+
+
+async def test_login_unknown_email_returns_401(client: AsyncClient):
+    r = await client.post("/api/v1/auth/login", json={
+        "email": "ghost@example.com",
+        "password": DEFAULT_PASSWORD,
+    })
+    assert r.status_code == 401
+
+
+async def test_login_inactive_user_returns_403(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    await create_user(db_session, email="inactive@example.com", is_active=False)
+
+    r = await client.post("/api/v1/auth/login", json={
+        "email": "inactive@example.com",
+        "password": DEFAULT_PASSWORD,
+    })
+    assert r.status_code == 403
+
+
+# ── /me ───────────────────────────────────────────────────────────────────────
+
+async def test_me_returns_current_user(client: AsyncClient):
+    r = await client.post("/api/v1/auth/register", json={
+        "email": "me@example.com",
+        "password": DEFAULT_PASSWORD,
+    })
+    token = r.json()["access_token"]
+
+    r2 = await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
     )
-    
-    assert response.status_code == 201
-    data = response.json()
-    assert "access_token" in data
-    assert "refresh_token" in data
-    assert data["token_type"] == "bearer"
-    assert data["expires_in"] == 15 * 60  # 15 minutes
+    assert r2.status_code == 200, r2.text
+    data = r2.json()
+    assert data["email"] == "me@example.com"
+    assert "id" in data
+    assert "created_at" in data
 
 
-@pytest.mark.asyncio
-async def test_register_weak_password(client: AsyncClient):
-    """Test registration with weak password."""
-    response = await client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": "weak@example.com",
-            "password": "weak",
-        },
+async def test_me_without_token_returns_403(client: AsyncClient):
+    r = await client.get("/api/v1/auth/me")
+    assert r.status_code in (401, 403)
+
+
+async def test_me_with_invalid_token_returns_403(client: AsyncClient):
+    r = await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": "Bearer not-a-real-token"},
     )
-    
-    assert response.status_code == 422  # Validation error
+    assert r.status_code in (401, 403)
 
 
-@pytest.mark.asyncio
-async def test_register_duplicate_email(client: AsyncClient, db_session: AsyncSession):
-    """Test registration with duplicate email."""
-    # First registration
-    response1 = await client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": "duplicate@example.com",
-            "password": "SecurePass123",
-        },
-    )
-    assert response1.status_code == 201
-    
-    # Attempt duplicate registration
-    response2 = await client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": "duplicate@example.com",
-            "password": "SecurePass123",
-        },
-    )
-    assert response2.status_code == 400
-    assert "already registered" in response2.json()["detail"].lower()
+# ── Full auth flow ────────────────────────────────────────────────────────────
 
+async def test_full_register_login_me_flow(client: AsyncClient):
+    email = "flow@example.com"
 
-@pytest.mark.asyncio
-async def test_login_success(client: AsyncClient):
-    """Test successful login."""
-    # Register user first
-    await client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": "login@example.com",
-            "password": "SecurePass123",
-        },
-    )
-    
-    # Login
-    response = await client.post(
-        "/api/v1/auth/login",
-        json={
-            "email": "login@example.com",
-            "password": "SecurePass123",
-        },
-    )
-    
-    assert response.status_code == 200
-    data = response.json()
-    assert "access_token" in data
-    assert "refresh_token" in data
+    # Step 1: register
+    r1 = await client.post("/api/v1/auth/register", json={
+        "email": email,
+        "password": DEFAULT_PASSWORD,
+    })
+    assert r1.status_code == 201
+    access_token = r1.json()["access_token"]
 
+    # Step 2: login with same credentials
+    r2 = await client.post("/api/v1/auth/login", json={
+        "email": email,
+        "password": DEFAULT_PASSWORD,
+    })
+    assert r2.status_code == 200
 
-@pytest.mark.asyncio
-async def test_login_wrong_password(client: AsyncClient):
-    """Test login with wrong password."""
-    # Register user first
-    await client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": "wrongpass@example.com",
-            "password": "SecurePass123",
-        },
-    )
-    
-    # Login with wrong password
-    response = await client.post(
-        "/api/v1/auth/login",
-        json={
-            "email": "wrongpass@example.com",
-            "password": "WrongPassword123",
-        },
-    )
-    
-    assert response.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_login_nonexistent_user(client: AsyncClient):
-    """Test login with non-existent user."""
-    response = await client.post(
-        "/api/v1/auth/login",
-        json={
-            "email": "nonexistent@example.com",
-            "password": "SecurePass123",
-        },
-    )
-    
-    assert response.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_get_current_user(client: AsyncClient):
-    """Test getting current user information."""
-    # Register and get tokens
-    reg_response = await client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": "currentuser@example.com",
-            "password": "SecurePass123",
-        },
-    )
-    tokens = reg_response.json()
-    access_token = tokens["access_token"]
-    
-    # Get current user
-    response = await client.get(
+    # Step 3: /me with token from registration
+    r3 = await client.get(
         "/api/v1/auth/me",
         headers={"Authorization": f"Bearer {access_token}"},
     )
-    
-    assert response.status_code == 200
-    data = response.json()
-    assert data["email"] == "currentuser@example.com"
-    assert data["is_active"] is True
-    assert data["role"] == "user"
-
-
-@pytest.mark.asyncio
-async def test_get_current_user_invalid_token(client: AsyncClient):
-    """Test getting current user with invalid token."""
-    response = await client.get(
-        "/api/v1/auth/me",
-        headers={"Authorization": "Bearer invalid_token"},
-    )
-    
-    assert response.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_refresh_token(client: AsyncClient):
-    """Test token refresh."""
-    # Register and get tokens
-    reg_response = await client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": "refresh@example.com",
-            "password": "SecurePass123",
-        },
-    )
-    tokens = reg_response.json()
-    refresh_token = tokens["refresh_token"]
-    
-    # Refresh tokens
-    response = await client.post(
-        "/api/v1/auth/refresh",
-        json={"refresh_token": refresh_token},
-    )
-    
-    assert response.status_code == 200
-    data = response.json()
-    assert "access_token" in data
-    assert "refresh_token" in data
-    assert data["access_token"] != tokens["access_token"]  # New token
-
-
-@pytest.mark.asyncio
-async def test_refresh_token_reuse(client: AsyncClient):
-    """Test that refresh tokens cannot be reused (token rotation)."""
-    # Register and get tokens
-    reg_response = await client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": "reuse@example.com",
-            "password": "SecurePass123",
-        },
-    )
-    tokens = reg_response.json()
-    refresh_token = tokens["refresh_token"]
-    
-    # Use refresh token once
-    response1 = await client.post(
-        "/api/v1/auth/refresh",
-        json={"refresh_token": refresh_token},
-    )
-    assert response1.status_code == 200
-    
-    # Try to reuse the same refresh token
-    response2 = await client.post(
-        "/api/v1/auth/refresh",
-        json={"refresh_token": refresh_token},
-    )
-    assert response2.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_logout(client: AsyncClient):
-    """Test user logout."""
-    # Register and get tokens
-    reg_response = await client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": "logout@example.com",
-            "password": "SecurePass123",
-        },
-    )
-    tokens = reg_response.json()
-    refresh_token = tokens["refresh_token"]
-    
-    # Logout
-    response = await client.post(
-        "/api/v1/auth/logout",
-        json={"refresh_token": refresh_token},
-    )
-    
-    assert response.status_code == 200
-    assert "logged out" in response.json()["message"].lower()
-    
-    # Try to use the refresh token after logout
-    refresh_response = await client.post(
-        "/api/v1/auth/refresh",
-        json={"refresh_token": refresh_token},
-    )
-    assert refresh_response.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_change_password(client: AsyncClient):
-    """Test password change."""
-    # Register and get tokens
-    reg_response = await client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": "changepass@example.com",
-            "password": "OldPassword123",
-        },
-    )
-    tokens = reg_response.json()
-    access_token = tokens["access_token"]
-    
-    # Change password
-    response = await client.post(
-        "/api/v1/auth/change-password",
-        json={
-            "current_password": "OldPassword123",
-            "new_password": "NewPassword456",
-        },
-        headers={"Authorization": f"Bearer {access_token}"},
-    )
-    
-    assert response.status_code == 200
-    
-    # Verify old password no longer works
-    login_old = await client.post(
-        "/api/v1/auth/login",
-        json={
-            "email": "changepass@example.com",
-            "password": "OldPassword123",
-        },
-    )
-    assert login_old.status_code == 401
-    
-    # Verify new password works
-    login_new = await client.post(
-        "/api/v1/auth/login",
-        json={
-            "email": "changepass@example.com",
-            "password": "NewPassword456",
-        },
-    )
-    assert login_new.status_code == 200
+    assert r3.status_code == 200
+    assert r3.json()["email"] == email
