@@ -3,6 +3,6 @@
   "outputDirectory": "dist",
   "framework": "astro",
   "env": {
-    "PUBLIC_API_URL": "@sonoro-api-url"
+    "PUBLIC_API_URL": "https://audiolibro-pdf-production.up.railway.app/api/v1"
   }
 }

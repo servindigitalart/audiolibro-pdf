@@ -1,57 +1,78 @@
 ---
 const steps = [
   {
-    n: '01',
-    title: 'Upload your PDF',
-    body:  'Drag & drop or click to upload. We accept any PDF up to 500 pages.',
+    title: 'Drop your PDF',
+    body:  'Drag, drop, or click to upload. Any PDF up to 500 pages. Takes three seconds.',
     icon:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    detail: 'PDF · Up to 500 pages · 100 MB',
   },
   {
-    n: '02',
-    title: 'AI converts it',
-    body:  'Our engine detects chapters, cleans the text, and generates natural-sounding audio.',
-    icon:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13 10V3L4 14h7v7l9-11h-7z" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    title: 'We do the rest',
+    body:  'Sonoro detects chapters, cleans the text, and synthesizes natural-sounding audio using neural TTS.',
+    icon:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    detail: 'Average 60 seconds · All automatic',
   },
   {
-    n: '03',
-    title: 'Listen anywhere',
-    body:  'Play in the browser or download the MP3. No app required.',
+    title: 'Hit play anywhere',
+    body:  'Stream in the browser or download the MP3. Chapter navigation, speed control, everything you need.',
     icon:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    detail: 'Browser · MP3 download · Offline',
   },
 ];
 ---
 
-<section id="how" class="section-padding bg-sonoro-surface">
+<section id="how" class="section-padding bg-sonoro-surface/60">
   <div class="mx-auto max-w-7xl px-6 lg:px-8">
 
     <div class="text-center mb-16 reveal">
-      <p class="label-sm text-sonoro-amber-dark mb-4">Simple by design</p>
-      <h2 class="heading-section">Three steps to audio</h2>
-      <p class="body-lg mt-4 max-w-xl mx-auto">
-        No configuration, no friction. Just upload and listen.
+      <p class="label-sm text-sonoro-amber-dark mb-4">As simple as it sounds</p>
+      <h2 class="heading-section">Upload. Convert. Listen.</h2>
+      <p class="body-lg mt-4 max-w-sm mx-auto">
+        No configuration. No learning curve. Just a PDF and your ears.
       </p>
     </div>
 
-    <div class="relative">
-      <!-- Connecting line (desktop) -->
-      <div class="hidden md:block absolute top-12 left-[16.6%] right-[16.6%] h-px bg-gradient-to-r from-transparent via-sonoro-border to-transparent" aria-hidden="true"></div>
+    <div class="relative max-w-3xl mx-auto">
+      <!-- Connecting line — desktop only -->
+      <div
+        class="hidden md:block absolute top-[52px] left-[calc(16.667%+48px)] right-[calc(16.667%+48px)] h-px pointer-events-none"
+        style="background: linear-gradient(90deg, transparent, rgba(232,231,227,1) 20%, rgba(232,231,227,1) 80%, transparent);"
+        aria-hidden="true"
+      ></div>
 
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-8 relative z-10">
-        {steps.map(({ n, title, body, icon }, i) => (
-          <div class="flex flex-col items-center text-center reveal" style={`transition-delay: ${i * 120}ms`}>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-10 relative z-10">
+        {steps.map(({ title, body, icon, detail }, i) => (
+          <div class={`flex flex-col items-center text-center reveal stagger-${i+1}`}>
+            <!-- Icon container -->
             <div class="relative mb-6">
-              <div class="flex h-24 w-24 items-center justify-center rounded-2xl bg-sonoro-white border border-sonoro-border shadow-card">
-                <div class="w-8 h-8 text-sonoro-amber-dark" set:html={icon}></div>
+              <div class="flex h-[104px] w-[104px] items-center justify-center rounded-3xl bg-sonoro-white border border-sonoro-border shadow-card group hover:shadow-hover hover:-translate-y-0.5 transition-all duration-200 ease-smooth">
+                <div class="w-8 h-8 text-sonoro-amber-dark"  set:html={icon}></div>
               </div>
-              <span class="absolute -top-2 -right-2 flex h-6 w-6 items-center justify-center rounded-full bg-sonoro-black text-xs font-bold text-sonoro-white">
+              <!-- Step number badge -->
+              <span
+                class="absolute -top-2.5 -right-2.5 flex h-6 w-6 items-center justify-center rounded-full bg-sonoro-black text-[10px] font-bold text-sonoro-white shadow-soft"
+                aria-label={`Step ${i+1}`}
+              >
                 {i + 1}
               </span>
             </div>
-            <h3 class="text-base font-semibold text-sonoro-900 mb-2">{title}</h3>
-            <p class="text-sm text-sonoro-600 leading-relaxed max-w-xs">{body}</p>
+
+            <h3 class="text-[0.9375rem] font-semibold text-sonoro-900 mb-2">{title}</h3>
+            <p class="text-sm text-sonoro-600 leading-relaxed mb-3">{body}</p>
+            <p class="text-[11px] text-sonoro-400 font-medium tabular">{detail}</p>
           </div>
         ))}
       </div>
+    </div>
+
+    <!-- CTA nudge below -->
+    <div class="mt-14 text-center reveal">
+      <a href="/register" class="btn-accent btn-lg">
+        Try it now — it's free
+        <svg class="w-4 h-4" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </a>
     </div>
 
   </div>

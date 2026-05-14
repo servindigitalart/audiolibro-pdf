@@ -3,6 +3,12 @@ import type { Chapter } from '@/lib/api/types';
 import { fmtDuration } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 
+// Deterministic waveform heights computed once at module level.
+// Using Math.random() inside render causes SSR/client hydration mismatches.
+const WAVE_HEIGHTS = Array.from({ length: 40 }, (_, i) =>
+  20 + (Math.abs(Math.sin(i * 0.47) * 0.6 + Math.sin(i * 0.13) * 0.4)) * 80
+);
+
 interface Props {
   chapters: Chapter[];
   documentTitle: string;
@@ -113,17 +119,13 @@ export default function AudioPlayer({ chapters, documentTitle }: Props) {
       <div className="px-6 pt-5 pb-2">
         {/* Decorative waveform */}
         <div className="flex items-end gap-0.5 h-10 mb-4">
-          {Array.from({ length: 40 }).map((_, i) => {
-            const h = Math.sin(i * 0.4) * 0.5 + Math.random() * 0.5;
-            const filled = i / 40 <= progress;
-            return (
-              <div
-                key={i}
-                className={cn('flex-1 rounded-sm transition-colors', filled ? 'bg-sonoro-amber' : 'bg-sonoro-border')}
-                style={{ height: `${20 + h * 80}%` }}
-              />
-            );
-          })}
+          {WAVE_HEIGHTS.map((h, i) => (
+            <div
+              key={i}
+              className={cn('flex-1 rounded-sm transition-colors', i / 40 <= progress ? 'bg-sonoro-amber' : 'bg-sonoro-border')}
+              style={{ height: `${h}%` }}
+            />
+          ))}
         </div>
 
         {/* Scrub bar */}

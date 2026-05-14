@@ -1,21 +1,25 @@
 ---
+// All imports at the top — Astro's frontmatter compiler requires this
 import DashboardLayout from '@/layouts/DashboardLayout.astro';
 import AudioPlayer from '@/components/dashboard/AudioPlayer';
 import { fetchDocument } from '@/lib/api/server';
-import type { Chapter } from '@/lib/api/types';
+import { fmtDate, fmtFileSize, fmtDuration } from '@/lib/utils';
+import type { Chapter, Document } from '@/lib/api/types';
 
 const token = (Astro.locals as any).token as string;
 const { id } = Astro.params;
 
 if (!id) return Astro.redirect('/dashboard/documents');
 
-let document = null;
+// Variable named 'doc' — never 'document' (shadows browser window.document global)
+let doc: Document | null = null;
 let chapters: Chapter[] = [];
 
 try {
-  [document, chapters] = await Promise.all([
+  const BASE = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:8000/api/v1';
+  [doc, chapters] = await Promise.all([
     fetchDocument(token, id),
-    fetch(`${import.meta.env.PUBLIC_API_URL}/documents/${id}/chapters`, {
+    fetch(`${BASE}/documents/${id}/chapters`, {
       headers: { Authorization: `Bearer ${token}` },
     }).then((r) => r.ok ? r.json() : []).catch(() => []),
   ]);
@@ -23,25 +27,23 @@ try {
   return Astro.redirect('/dashboard/documents');
 }
 
-import { fmtDate, fmtFileSize, fmtDuration } from '@/lib/utils';
-
-const duration = document.metadata?.duration_seconds;
+const duration = doc?.metadata?.duration_seconds;
 ---
 
-<DashboardLayout title={`${document.title || document.filename} – Sonoro`} activeNav="documents">
+<DashboardLayout title={`${(doc?.title || doc?.filename) ?? 'Document'} – Sonoro`} activeNav="documents">
   <!-- Breadcrumb -->
   <nav class="flex items-center gap-2 text-xs text-sonoro-muted mb-6" aria-label="Breadcrumb">
     <a href="/dashboard" class="hover:text-sonoro-900 transition-colors">Dashboard</a>
     <span aria-hidden="true">/</span>
     <a href="/dashboard/documents" class="hover:text-sonoro-900 transition-colors">Library</a>
     <span aria-hidden="true">/</span>
-    <span class="text-sonoro-700 truncate max-w-xs">{document.title || document.filename}</span>
+    <span class="text-sonoro-700 truncate max-w-xs">{doc?.title || doc?.filename}</span>
   </nav>
 
   <div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
     <!-- Player — 3 cols -->
     <div class="lg:col-span-3">
-      <AudioPlayer chapters={chapters} documentTitle={document.title || document.filename} client:load />
+      <AudioPlayer chapters={chapters} documentTitle={(doc?.title || doc?.filename) ?? ''} client:load />
     </div>
 
     <!-- Metadata — 2 cols -->
@@ -50,12 +52,12 @@ const duration = document.metadata?.duration_seconds;
         <h2 class="text-sm font-semibold text-sonoro-900 mb-4">Document info</h2>
         <dl class="space-y-3">
           {[
-            { label: 'Filename',   value: document.filename },
-            { label: 'File size',  value: fmtFileSize(document.file_size) },
-            { label: 'Pages',      value: document.metadata?.pages ?? '—' },
-            { label: 'Chapters',   value: (chapters.length || document.metadata?.chapters) ?? '—' },
-            { label: 'Duration',   value: duration ? fmtDuration(duration) : '—' },
-            { label: 'Uploaded',   value: fmtDate(document.upload_date) },
+            { label: 'Filename',  value: doc?.filename ?? '—' },
+            { label: 'File size', value: doc ? fmtFileSize(doc.file_size) : '—' },
+            { label: 'Pages',     value: doc?.metadata?.pages ?? '—' },
+            { label: 'Chapters',  value: (chapters.length || doc?.metadata?.chapters) ?? '—' },
+            { label: 'Duration',  value: duration ? fmtDuration(duration) : '—' },
+            { label: 'Uploaded',  value: doc ? fmtDate(doc.upload_date) : '—' },
           ].map(({ label, value }) => (
             <div class="flex justify-between gap-4">
               <dt class="text-xs text-sonoro-muted shrink-0">{label}</dt>
@@ -66,9 +68,9 @@ const duration = document.metadata?.duration_seconds;
       </div>
 
       <!-- Download -->
-      {document.status === 'completed' && document.audiobook_url && (
+      {doc?.status === 'completed' && doc?.audiobook_url && (
         <a
-          href={document.audiobook_url}
+          href={doc.audiobook_url}
           download
           class="btn-outline w-full justify-center btn-lg"
         >

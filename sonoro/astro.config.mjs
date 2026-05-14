@@ -12,9 +12,4 @@ export default defineConfig({
     react(),
     tailwind({ applyBaseStyles: false }),
   ],
-  vite: {
-    define: {
-      'process.env.PUBLIC_API_URL': JSON.stringify(process.env.PUBLIC_API_URL),
-    },
-  },
 });

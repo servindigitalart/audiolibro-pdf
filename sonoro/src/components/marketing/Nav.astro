@@ -2,48 +2,75 @@
 import SonoroLogo from '@/components/ui/SonoroLogo.astro';
 ---
 
-<header class="fixed top-0 inset-x-0 z-50">
-  <!-- Frosted glass backdrop -->
-  <div class="absolute inset-0 bg-sonoro-white/80 backdrop-blur-xl border-b border-sonoro-border/60"></div>
+<header id="main-nav" class="fixed top-0 inset-x-0 z-50 transition-all duration-300">
+  <!-- Glass backdrop — starts transparent, fills on scroll -->
+  <div
+    id="nav-backdrop"
+    class="absolute inset-0 bg-sonoro-white/0 backdrop-blur-0 border-b border-transparent transition-all duration-300"
+    aria-hidden="true"
+  ></div>
 
   <nav class="relative mx-auto flex max-w-7xl items-center justify-between px-6 py-4 lg:px-8">
     <!-- Logo -->
     <a href="/" class="flex items-center gap-2.5 group" aria-label="Sonoro home">
-      <SonoroLogo class="h-7 w-7" />
-      <span class="text-xl font-bold tracking-tight text-sonoro-900 group-hover:text-sonoro-amber transition-colors">
+      <SonoroLogo class="h-6 w-6" />
+      <span class="text-[1.0625rem] font-bold tracking-tight text-sonoro-900 group-hover:text-sonoro-amber transition-colors duration-200">
         Sonoro
       </span>
     </a>
 
     <!-- Center links -->
-    <ul class="hidden md:flex items-center gap-1">
+    <ul class="hidden md:flex items-center gap-1" role="list">
       {[
-        { href: '/#features', label: 'Features' },
-        { href: '/pricing',   label: 'Pricing'  },
+        { href: '/#features', label: 'Features'     },
+        { href: '/pricing',   label: 'Pricing'      },
         { href: '/#how',      label: 'How it works' },
       ].map(({ href, label }) => (
         <li>
           <a
             href={href}
-            class="px-4 py-2 rounded-full text-sm text-sonoro-600 hover:text-sonoro-900 hover:bg-sonoro-surface transition-all duration-150"
+            class="relative px-4 py-2 rounded-full text-sm text-sonoro-600 hover:text-sonoro-900 transition-colors duration-150 group"
           >
-            {label}
+            <span class="relative z-10">{label}</span>
+            <span class="absolute inset-0 rounded-full bg-sonoro-surface opacity-0 group-hover:opacity-100 transition-opacity duration-150" aria-hidden="true"></span>
           </a>
         </li>
       ))}
     </ul>
 
     <!-- Actions -->
-    <div class="flex items-center gap-3">
-      <a href="/login" class="hidden sm:block text-sm text-sonoro-600 hover:text-sonoro-900 transition-colors px-3 py-2">
+    <div class="flex items-center gap-2">
+      <a href="/login" class="hidden sm:block text-sm font-medium text-sonoro-600 hover:text-sonoro-900 transition-colors px-3 py-2">
         Sign in
       </a>
-      <a href="/register" class="btn-primary btn-sm !px-5 !py-2 text-sm">
+      <a href="/register" class="btn-primary btn-sm !rounded-full !px-5 !py-2 text-sm">
         Get started free
       </a>
     </div>
   </nav>
 </header>
 
-<!-- Spacer for fixed nav -->
-<div class="h-[72px]"></div>
+<!-- Spacer -->
+<div class="h-[68px]"></div>
+
+<script>
+  const backdrop = document.getElementById('nav-backdrop');
+  let ticking = false;
+
+  function updateNav() {
+    if (!backdrop) return;
+    const scrolled = window.scrollY > 24;
+    backdrop.style.background = scrolled ? 'rgba(253,252,251,0.88)' : 'rgba(253,252,251,0)';
+    backdrop.style.backdropFilter = scrolled ? 'blur(20px) saturate(180%)' : 'blur(0px)';
+    backdrop.style.webkitBackdropFilter = scrolled ? 'blur(20px) saturate(180%)' : 'blur(0px)';
+    backdrop.style.borderColor = scrolled ? 'rgba(232,231,227,0.8)' : 'transparent';
+    ticking = false;
+  }
+
+  window.addEventListener('scroll', () => {
+    if (!ticking) {
+      requestAnimationFrame(updateNav);
+      ticking = true;
+    }
+  }, { passive: true });
+</script>

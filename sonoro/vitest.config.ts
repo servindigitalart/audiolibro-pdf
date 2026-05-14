@@ -1,5 +1,7 @@
 import { defineConfig } from 'vitest/config';
-import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
 export default defineConfig({
   test: {
@@ -8,6 +10,6 @@ export default defineConfig({
     setupFiles: ['./src/tests/setup.ts'],
   },
   resolve: {
-    alias: { '@': path.resolve(__dirname, 'src') },
+    alias: { '@': `${__dirname}src` },
   },
 });

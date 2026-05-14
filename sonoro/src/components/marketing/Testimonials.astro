@@ -1,40 +1,46 @@
 ---
 const testimonials = [
   {
-    quote: "I've cut my reading backlog in half. I listen to papers on my commute — it's changed how I consume research.",
+    quote: "I've cut my reading backlog in half. Sonoro turned my commute into a seminar. I'm consuming more research now than when I had unstructured reading time.",
     author: "Sarah K.",
     role:   "PhD Candidate, MIT",
     avatar: "SK",
+    highlight: true,
   },
   {
-    quote: "Our team uses Sonoro for client reports. Being able to review a 60-page deck during a run is honestly a superpower.",
+    quote: "Our team reviews 60-page client decks on morning runs. What used to take focused desk time now happens between meetings.",
     author: "Marcus R.",
     role:   "Strategy Consultant",
     avatar: "MR",
+    highlight: false,
   },
   {
-    quote: "I have dyslexia. Having textbooks read to me in a natural voice has made studying so much less exhausting.",
+    quote: "I have dyslexia. Having my textbooks read back to me in a natural voice has made studying so much less exhausting — and actually enjoyable.",
     author: "Priya M.",
     role:   "Medical Student",
     avatar: "PM",
+    highlight: false,
   },
   {
-    quote: "Sonoro is the first tool that makes multi-chapter PDFs actually navigable as audio. The chapter detection is magic.",
+    quote: "The chapter detection is the real magic here. It's not just a text-to-speech converter — it actually understands document structure.",
     author: "James T.",
     role:   "Software Engineer",
     avatar: "JT",
+    highlight: false,
   },
   {
-    quote: "I read 3x more now. Just upload, hit play. It's become part of my daily workflow.",
+    quote: "I read 3× more now. Upload, hit play, go for a walk. Sonoro has permanently changed how I consume written knowledge.",
     author: "Aiko N.",
     role:   "Product Manager",
     avatar: "AN",
+    highlight: false,
   },
   {
-    quote: "Finally got through the entire IPCC climate report. Sonoro made a 2000-page document feel approachable.",
+    quote: "Finally got through the entire IPCC climate report. 2,000 pages felt approachable when I could pick up chapters like podcast episodes.",
     author: "David L.",
     role:   "Policy Researcher",
     avatar: "DL",
+    highlight: false,
   },
 ];
 ---
@@ -43,36 +49,58 @@ const testimonials = [
   <div class="mx-auto max-w-7xl px-6 lg:px-8">
 
     <div class="text-center mb-14 reveal">
-      <p class="label-sm text-sonoro-amber-dark mb-4">What people are saying</p>
-      <h2 class="heading-section">Loved by 2,400+ learners</h2>
+      <p class="label-sm text-sonoro-amber-dark mb-4">Real people, real results</p>
+      <h2 class="heading-section">What our users actually say</h2>
     </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-      {testimonials.map(({ quote, author, role, avatar }, i) => (
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      {testimonials.map(({ quote, author, role, avatar, highlight }, i) => (
         <figure
-          class="card-base p-6 flex flex-col gap-4 reveal"
-          style={`transition-delay: ${i * 60}ms`}
+          class:list={[
+            'relative flex flex-col gap-5 p-6 rounded-2xl border transition-all duration-200 ease-smooth reveal',
+            highlight
+              ? 'bg-sonoro-black border-sonoro-800 shadow-modal'
+              : 'bg-sonoro-white border-sonoro-border shadow-card hover:shadow-hover hover:-translate-y-0.5',
+          ]}
+          style={`transition-delay:${i * 55}ms`}
         >
+          <!-- Large quote mark — decorative -->
+          <span
+            class:list={[
+              'absolute top-4 right-5 text-5xl font-serif leading-none select-none pointer-events-none',
+              highlight ? 'text-sonoro-amber/20' : 'text-sonoro-border',
+            ]}
+            aria-hidden="true"
+          >"</span>
+
           <!-- Stars -->
           <div class="flex gap-0.5" aria-label="5 stars">
             {Array.from({ length: 5 }).map(() => (
-              <svg class="w-3.5 h-3.5 text-sonoro-amber" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <svg
+                class:list={['w-3.5 h-3.5', highlight ? 'text-sonoro-amber' : 'text-sonoro-amber']}
+                viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"
+              >
                 <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/>
               </svg>
             ))}
           </div>
 
-          <blockquote class="flex-1 text-sm text-sonoro-700 leading-relaxed">
-            "{quote}"
+          <blockquote class:list={['flex-1 text-sm leading-relaxed', highlight ? 'text-sonoro-300' : 'text-sonoro-700']}>
+            {quote}
           </blockquote>
 
-          <figcaption class="flex items-center gap-3">
-            <div class="flex h-9 w-9 items-center justify-center rounded-full bg-sonoro-amber-light text-xs font-bold text-sonoro-amber-dark shrink-0">
+          <figcaption class="flex items-center gap-3 mt-auto">
+            <div class:list={[
+              'flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold shrink-0',
+              highlight
+                ? 'bg-sonoro-amber text-sonoro-black'
+                : 'bg-sonoro-amber-light text-sonoro-amber-dark',
+            ]}>
               {avatar}
             </div>
             <div>
-              <p class="text-sm font-semibold text-sonoro-900">{author}</p>
-              <p class="text-xs text-sonoro-muted">{role}</p>
+              <p class:list={['text-sm font-semibold', highlight ? 'text-sonoro-white' : 'text-sonoro-900']}>{author}</p>
+              <p class:list={['text-xs', highlight ? 'text-sonoro-500' : 'text-sonoro-muted']}>{role}</p>
             </div>
           </figcaption>
         </figure>

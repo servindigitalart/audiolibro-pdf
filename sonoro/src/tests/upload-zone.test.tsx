@@ -36,7 +36,7 @@ describe('UploadZone', () => {
     fireEvent.change(input);
 
     await waitFor(() => {
-      expect(screen.getByText(/Upload successful/i)).toBeInTheDocument();
+      expect(screen.getByText(/Conversion started/i)).toBeInTheDocument();
     });
 
     expect(mockUpload).toHaveBeenCalledWith(file, expect.any(Function));

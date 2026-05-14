@@ -1,15 +1,25 @@
 ---
 ---
 <section class="section-padding bg-sonoro-black text-sonoro-white overflow-hidden relative">
-  <!-- Decorative glow -->
+
+  <!-- Ambient orb -->
   <div
-    class="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[300px] rounded-full opacity-20 blur-3xl pointer-events-none"
-    style="background: radial-gradient(ellipse at center, #F59E0B 0%, transparent 70%);"
+    class="absolute top-0 left-1/2 -translate-x-1/2 w-[700px] h-[320px] glow-orb animate-glow-pulse pointer-events-none"
+    style="background: radial-gradient(ellipse at center, rgba(245,158,11,0.22) 0%, rgba(245,158,11,0.05) 45%, transparent 70%);"
     aria-hidden="true"
   ></div>
 
-  <div class="relative mx-auto max-w-3xl px-6 text-center lg:px-8">
-    <div class="flex items-center justify-center gap-1.5 mb-4">
+  <!-- Subtle grid on dark bg -->
+  <div
+    class="absolute inset-0 pointer-events-none"
+    style="background-image: linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px); background-size: 64px 64px;"
+    aria-hidden="true"
+  ></div>
+
+  <div class="relative mx-auto max-w-2xl px-6 text-center lg:px-8">
+
+    <!-- Stars -->
+    <div class="flex items-center justify-center gap-1 mb-6 reveal">
       {Array.from({ length: 5 }).map(() => (
         <svg class="w-4 h-4 text-sonoro-amber" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
           <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/>
@@ -17,18 +27,18 @@
       ))}
     </div>
 
-    <h2 class="text-display-lg md:text-display-xl font-bold tracking-tight text-balance">
-      Your reading list is waiting.<br />Start listening today.
+    <h2 class="text-display-lg md:text-display-xl font-bold tracking-tight text-balance leading-tight reveal">
+      Your reading list won't<br />read itself.
     </h2>
 
-    <p class="mt-5 text-sonoro-400 text-lg leading-relaxed max-w-lg mx-auto">
-      Join 2,400+ professionals and students who've made Sonoro part of their learning routine.
+    <p class="mt-5 text-sonoro-400 text-lg leading-relaxed max-w-sm mx-auto reveal" style="transition-delay:80ms">
+      Join 2,400+ professionals who've turned commute time, gym time, and downtime into a learning advantage.
     </p>
 
-    <div class="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
+    <div class="mt-10 flex flex-col sm:flex-row items-center justify-center gap-3 reveal" style="transition-delay:160ms">
       <a
         href="/register"
-        class="inline-flex items-center gap-2 rounded-full bg-sonoro-amber px-8 py-3.5 text-sm font-semibold text-sonoro-black hover:bg-sonoro-amber-dark transition-all duration-150 active:scale-[0.98] shadow-hover"
+        class="btn-accent btn-lg"
       >
         Get started — it's free
         <svg class="w-4 h-4" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -37,14 +47,15 @@
       </a>
       <a
         href="/pricing"
-        class="text-sm text-sonoro-400 hover:text-sonoro-white transition-colors underline-offset-4 hover:underline"
+        class="text-sm font-medium text-sonoro-500 hover:text-sonoro-300 transition-colors duration-150"
       >
         View pricing →
       </a>
     </div>
 
-    <p class="mt-6 text-xs text-sonoro-600">
-      No credit card · Free forever tier · Cancel anytime
+    <p class="mt-6 text-xs text-sonoro-600 reveal" style="transition-delay:220ms">
+      No credit card · Free tier forever · Cancel anytime
     </p>
+
   </div>
 </section>

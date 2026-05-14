@@ -1,43 +1,41 @@
 ---
 const stats = [
-  { value: '2,400+', label: 'Users worldwide' },
-  { value: '180K+',  label: 'PDFs converted' },
-  { value: '< 60s',  label: 'Average conversion' },
-  { value: '4.9★',   label: 'Average rating' },
+  { value: '2,400+', label: 'People listening daily',    note: 'students, researchers, professionals' },
+  { value: '180K+',  label: 'PDFs converted',            note: 'and counting' },
+  { value: '< 60s',  label: 'Average conversion time',   note: 'from upload to playback' },
+  { value: '4.9',    label: 'Average satisfaction score', note: 'across 800+ reviews' },
 ];
 
-const logos = [
-  'MIT',
-  'Stanford',
-  'Y Combinator',
-  'McKinsey',
-  'Oxford',
-  'Notion',
-];
+const institutions = ['MIT', 'Stanford', 'Oxford', 'McKinsey & Co.', 'Y Combinator', 'Harvard'];
 ---
 
-<section class="border-y border-sonoro-border bg-sonoro-surface py-14">
+<section class="border-y border-sonoro-border/60 bg-sonoro-surface/50 py-16 overflow-hidden">
   <div class="mx-auto max-w-7xl px-6 lg:px-8">
 
-    <!-- Stats -->
-    <dl class="grid grid-cols-2 gap-x-8 gap-y-10 md:grid-cols-4 text-center mb-14">
-      {stats.map(({ value, label }) => (
-        <div>
-          <dt class="text-display-md font-bold text-sonoro-900 tracking-tight">{value}</dt>
-          <dd class="mt-1 text-sm text-sonoro-muted">{label}</dd>
+    <!-- Stats row -->
+    <dl class="grid grid-cols-2 gap-x-6 gap-y-10 md:grid-cols-4 text-center reveal mb-14">
+      {stats.map(({ value, label, note }, i) => (
+        <div class={`reveal stagger-${i+1}`}>
+          <dt class="text-display-md font-bold text-sonoro-900 tabular tracking-tight leading-none mb-1">
+            {value}
+          </dt>
+          <dd class="text-sm font-medium text-sonoro-700">{label}</dd>
+          <dd class="text-xs text-sonoro-400 mt-0.5">{note}</dd>
         </div>
       ))}
     </dl>
 
-    <!-- Used at -->
-    <p class="label-sm text-center mb-8">Trusted by people at</p>
-    <ul class="flex flex-wrap items-center justify-center gap-x-10 gap-y-4">
-      {logos.map((name) => (
-        <li class="text-sm font-semibold text-sonoro-400 hover:text-sonoro-700 transition-colors">
-          {name}
-        </li>
-      ))}
-    </ul>
+    <!-- Trusted at -->
+    <div class="text-center reveal">
+      <p class="label-sm mb-6">Trusted by people at</p>
+      <ul class="flex flex-wrap items-center justify-center gap-x-8 gap-y-3" role="list">
+        {institutions.map((name) => (
+          <li class="text-sm font-semibold text-sonoro-300 hover:text-sonoro-500 transition-colors duration-200 cursor-default">
+            {name}
+          </li>
+        ))}
+      </ul>
+    </div>
 
   </div>
 </section>

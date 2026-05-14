@@ -28,6 +28,20 @@ const appUrl = import.meta.env.PUBLIC_APP_URL ?? 'https://sonoro.app';
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#FDFCFB" />
 
+    <!-- Inter font — preconnect + async load (no render-blocking) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      id="font-inter"
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+      media="all"
+    />
+    <!-- Progressively load: initially apply print media so it doesn't block render -->
+    <script is:inline>
+      (function(){var l=document.getElementById('font-inter');if(l){l.media='print';l.onload=function(){l.media='all';l.onload=null;}}})();
+    </script>
+
     <!-- SEO -->
     <title>{title}</title>
     <meta name="description" content={description} />
@@ -72,20 +86,22 @@ const appUrl = import.meta.env.PUBLIC_APP_URL ?? 'https://sonoro.app';
   <body class="bg-sonoro-white text-sonoro-900 antialiased">
     <slot />
 
-    <!-- Scroll reveal observer -->
-    <script>
-      const observer = new IntersectionObserver(
-        (entries) => {
-          entries.forEach((e) => {
-            if (e.isIntersecting) {
-              e.target.classList.add('visible');
-              observer.unobserve(e.target);
-            }
-          });
-        },
-        { threshold: 0.1 }
-      );
-      document.querySelectorAll('.reveal').forEach((el) => observer.observe(el));
+    <!-- Scroll reveal observer — GPU-composited, stagger-aware -->
+    <script is:inline>
+      (function () {
+        var observer = new IntersectionObserver(
+          function (entries) {
+            entries.forEach(function (e) {
+              if (e.isIntersecting) {
+                e.target.classList.add('visible');
+                observer.unobserve(e.target);
+              }
+            });
+          },
+          { threshold: 0.08, rootMargin: '0px 0px -40px 0px' }
+        );
+        document.querySelectorAll('.reveal').forEach(function (el) { observer.observe(el); });
+      })();
     </script>
   </body>
 </html>
