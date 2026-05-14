@@ -1,0 +1,83 @@
+---
+const testimonials = [
+  {
+    quote: "I've cut my reading backlog in half. I listen to papers on my commute — it's changed how I consume research.",
+    author: "Sarah K.",
+    role:   "PhD Candidate, MIT",
+    avatar: "SK",
+  },
+  {
+    quote: "Our team uses Sonoro for client reports. Being able to review a 60-page deck during a run is honestly a superpower.",
+    author: "Marcus R.",
+    role:   "Strategy Consultant",
+    avatar: "MR",
+  },
+  {
+    quote: "I have dyslexia. Having textbooks read to me in a natural voice has made studying so much less exhausting.",
+    author: "Priya M.",
+    role:   "Medical Student",
+    avatar: "PM",
+  },
+  {
+    quote: "Sonoro is the first tool that makes multi-chapter PDFs actually navigable as audio. The chapter detection is magic.",
+    author: "James T.",
+    role:   "Software Engineer",
+    avatar: "JT",
+  },
+  {
+    quote: "I read 3x more now. Just upload, hit play. It's become part of my daily workflow.",
+    author: "Aiko N.",
+    role:   "Product Manager",
+    avatar: "AN",
+  },
+  {
+    quote: "Finally got through the entire IPCC climate report. Sonoro made a 2000-page document feel approachable.",
+    author: "David L.",
+    role:   "Policy Researcher",
+    avatar: "DL",
+  },
+];
+---
+
+<section class="section-padding bg-sonoro-white overflow-hidden">
+  <div class="mx-auto max-w-7xl px-6 lg:px-8">
+
+    <div class="text-center mb-14 reveal">
+      <p class="label-sm text-sonoro-amber-dark mb-4">What people are saying</p>
+      <h2 class="heading-section">Loved by 2,400+ learners</h2>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+      {testimonials.map(({ quote, author, role, avatar }, i) => (
+        <figure
+          class="card-base p-6 flex flex-col gap-4 reveal"
+          style={`transition-delay: ${i * 60}ms`}
+        >
+          <!-- Stars -->
+          <div class="flex gap-0.5" aria-label="5 stars">
+            {Array.from({ length: 5 }).map(() => (
+              <svg class="w-3.5 h-3.5 text-sonoro-amber" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/>
+              </svg>
+            ))}
+          </div>
+
+          <blockquote class="flex-1 text-sm text-sonoro-700 leading-relaxed">
+            "{quote}"
+          </blockquote>
+
+          <figcaption class="flex items-center gap-3">
+            <div class="flex h-9 w-9 items-center justify-center rounded-full bg-sonoro-amber-light text-xs font-bold text-sonoro-amber-dark shrink-0">
+              {avatar}
+            </div>
+            <div>
+              <p class="text-sm font-semibold text-sonoro-900">{author}</p>
+              <p class="text-xs text-sonoro-muted">{role}</p>
+            </div>
+          </figcaption>
+        </figure>
+      ))}
+    </div>
+
+  </div>
+</section>

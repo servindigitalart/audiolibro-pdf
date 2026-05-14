@@ -1,0 +1,65 @@
+---
+import type { User } from '@/lib/api/types';
+
+export interface Props {
+  user: User | null;
+}
+const { user } = Astro.props;
+---
+
+<header class="flex items-center justify-between border-b border-sonoro-border bg-sonoro-white px-6 py-3.5 shrink-0">
+  <!-- Mobile logo -->
+  <div class="md:hidden font-bold text-sonoro-900">Sonoro</div>
+
+  <!-- Breadcrumb placeholder -->
+  <div class="hidden md:block text-sm text-sonoro-muted"></div>
+
+  <!-- Right actions -->
+  <div class="flex items-center gap-4">
+    <!-- Upload button -->
+    <a
+      href="/dashboard/upload"
+      class="btn-primary btn-sm hidden sm:inline-flex"
+    >
+      <svg class="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M8 2v9m-4-4 4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M2 13h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      Upload PDF
+    </a>
+
+    <!-- User menu -->
+    {user ? (
+      <div class="relative group">
+        <button
+          class="flex h-8 w-8 items-center justify-center rounded-full bg-sonoro-amber-light text-xs font-bold text-sonoro-amber-dark hover:ring-2 hover:ring-sonoro-amber/30 transition-all"
+          aria-label="User menu"
+        >
+          {user.email.charAt(0).toUpperCase()}
+        </button>
+        <!-- Dropdown (CSS hover) -->
+        <div class="absolute right-0 top-full mt-2 w-44 rounded-xl border border-sonoro-border bg-sonoro-white shadow-hover opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-150 z-50">
+          <div class="px-3 py-2.5 border-b border-sonoro-border">
+            <p class="text-xs text-sonoro-900 font-medium truncate">{user.email}</p>
+            <p class="text-[10px] text-sonoro-muted">{user.plan_tier}</p>
+          </div>
+          <div class="py-1">
+            <a href="/dashboard/settings" class="flex items-center gap-2 px-3 py-2 text-xs text-sonoro-700 hover:bg-sonoro-surface transition-colors">
+              Settings
+            </a>
+            <a href="/dashboard/billing" class="flex items-center gap-2 px-3 py-2 text-xs text-sonoro-700 hover:bg-sonoro-surface transition-colors">
+              Billing
+            </a>
+            <form method="POST" action="/api/logout">
+              <button type="submit" class="flex w-full items-center gap-2 px-3 py-2 text-xs text-red-600 hover:bg-red-50 transition-colors">
+                Sign out
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    ) : (
+      <a href="/login" class="text-sm text-sonoro-600 hover:text-sonoro-900">Sign in</a>
+    )}
+  </div>
+</header>

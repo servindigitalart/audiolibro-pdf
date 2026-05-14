@@ -1,0 +1,86 @@
+---
+export const prerender = false;  // SSR so pricing is always live
+
+import MarketingLayout from '@/layouts/MarketingLayout.astro';
+import PricingSection from '@/components/marketing/PricingSection.astro';
+import CTA from '@/components/marketing/CTA.astro';
+import { fetchTierCatalog } from '@/lib/api/server';
+import type { TierConfig } from '@/lib/api/types';
+
+let tiers: TierConfig[] = [];
+try {
+  tiers = await fetchTierCatalog();
+} catch {
+  // Component handles fallback
+}
+
+const faq = [
+  {
+    q: 'Can I try before I pay?',
+    a: 'Yes — the Free tier never expires. Paid tiers include a 14-day trial with no credit card required.',
+  },
+  {
+    q: 'What counts as a "character"?',
+    a: 'Every letter, number, and symbol in your PDF counts as one character. A typical 200-page textbook is roughly 500,000 characters.',
+  },
+  {
+    q: 'Can I cancel anytime?',
+    a: 'Absolutely. Cancel from the billing dashboard and your plan continues until the end of the billing period.',
+  },
+  {
+    q: 'Do you offer annual discounts?',
+    a: 'Yes — annual plans are discounted by ~20%. Toggle to annual at checkout to see the exact savings.',
+  },
+  {
+    q: 'Is my data private?',
+    a: 'Your documents are encrypted in transit and at rest. We never use your content for model training.',
+  },
+];
+---
+
+<MarketingLayout
+  title="Pricing – Sonoro"
+  description="Simple, transparent pricing for PDF to audiobook conversion. Free tier available. Paid plans start at $9/mo."
+>
+  <div class="section-padding pt-20">
+    <!-- Header -->
+    <div class="mx-auto max-w-3xl px-6 text-center mb-4">
+      <p class="label-sm text-sonoro-amber-dark mb-4">Pricing</p>
+      <h1 class="heading-section text-display-lg">
+        Simple, honest pricing
+      </h1>
+      <p class="body-lg mt-4">
+        Start free. Upgrade only when you need more.
+      </p>
+    </div>
+  </div>
+
+  <PricingSection tiers={tiers} />
+
+  <!-- FAQ -->
+  <section class="section-padding bg-sonoro-white">
+    <div class="mx-auto max-w-3xl px-6">
+      <h2 class="heading-section text-center mb-12">Frequently asked questions</h2>
+
+      <dl class="space-y-6">
+        {faq.map(({ q, a }) => (
+          <div class="card-base p-6">
+            <dt class="text-sm font-semibold text-sonoro-900 mb-2">{q}</dt>
+            <dd class="text-sm text-sonoro-600 leading-relaxed">{a}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <div class="mt-10 text-center">
+        <p class="text-sm text-sonoro-muted">
+          Still have questions?{' '}
+          <a href="mailto:hello@sonoro.app" class="text-sonoro-amber-dark hover:text-sonoro-amber underline-offset-4 hover:underline">
+            Get in touch →
+          </a>
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <CTA />
+</MarketingLayout>

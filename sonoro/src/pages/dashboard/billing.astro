@@ -1,0 +1,38 @@
+---
+import DashboardLayout from '@/layouts/DashboardLayout.astro';
+import BillingPanel from '@/components/billing/BillingPanel';
+import { fetchAccountOverview, fetchTierCatalog } from '@/lib/api/server';
+import type { TierConfig } from '@/lib/api/types';
+
+const token = (Astro.locals as any).token as string;
+
+const upgrade = Astro.url.searchParams.get('upgrade') ?? null;
+
+const [overview, tiers] = await Promise.all([
+  fetchAccountOverview(token).catch(() => null),
+  fetchTierCatalog().catch(() => [] as TierConfig[]),
+]);
+
+if (!overview) return Astro.redirect('/login');
+---
+
+<DashboardLayout title="Billing – Sonoro" activeNav="billing">
+  <div class="mb-8">
+    <h1 class="text-2xl font-bold text-sonoro-900 mb-1">Billing</h1>
+    <p class="text-sm text-sonoro-muted">Manage your plan, view usage, and update payment details.</p>
+  </div>
+
+  {upgrade && (
+    <div class="mb-6 rounded-xl border border-sonoro-amber/40 bg-sonoro-amber-light px-5 py-4 flex items-center gap-3">
+      <span class="text-xl">🎉</span>
+      <div>
+        <p class="text-sm font-semibold text-sonoro-amber-dark capitalize">
+          {upgrade} plan selected
+        </p>
+        <p class="text-xs text-sonoro-700 mt-0.5">Complete checkout below to activate your trial.</p>
+      </div>
+    </div>
+  )}
+
+  <BillingPanel overview={overview} tiers={tiers} client:load />
+</DashboardLayout>

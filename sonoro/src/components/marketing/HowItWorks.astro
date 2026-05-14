@@ -1,0 +1,58 @@
+---
+const steps = [
+  {
+    n: '01',
+    title: 'Upload your PDF',
+    body:  'Drag & drop or click to upload. We accept any PDF up to 500 pages.',
+    icon:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  },
+  {
+    n: '02',
+    title: 'AI converts it',
+    body:  'Our engine detects chapters, cleans the text, and generates natural-sounding audio.',
+    icon:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13 10V3L4 14h7v7l9-11h-7z" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  },
+  {
+    n: '03',
+    title: 'Listen anywhere',
+    body:  'Play in the browser or download the MP3. No app required.',
+    icon:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  },
+];
+---
+
+<section id="how" class="section-padding bg-sonoro-surface">
+  <div class="mx-auto max-w-7xl px-6 lg:px-8">
+
+    <div class="text-center mb-16 reveal">
+      <p class="label-sm text-sonoro-amber-dark mb-4">Simple by design</p>
+      <h2 class="heading-section">Three steps to audio</h2>
+      <p class="body-lg mt-4 max-w-xl mx-auto">
+        No configuration, no friction. Just upload and listen.
+      </p>
+    </div>
+
+    <div class="relative">
+      <!-- Connecting line (desktop) -->
+      <div class="hidden md:block absolute top-12 left-[16.6%] right-[16.6%] h-px bg-gradient-to-r from-transparent via-sonoro-border to-transparent" aria-hidden="true"></div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-8 relative z-10">
+        {steps.map(({ n, title, body, icon }, i) => (
+          <div class="flex flex-col items-center text-center reveal" style={`transition-delay: ${i * 120}ms`}>
+            <div class="relative mb-6">
+              <div class="flex h-24 w-24 items-center justify-center rounded-2xl bg-sonoro-white border border-sonoro-border shadow-card">
+                <div class="w-8 h-8 text-sonoro-amber-dark" set:html={icon}></div>
+              </div>
+              <span class="absolute -top-2 -right-2 flex h-6 w-6 items-center justify-center rounded-full bg-sonoro-black text-xs font-bold text-sonoro-white">
+                {i + 1}
+              </span>
+            </div>
+            <h3 class="text-base font-semibold text-sonoro-900 mb-2">{title}</h3>
+            <p class="text-sm text-sonoro-600 leading-relaxed max-w-xs">{body}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+
+  </div>
+</section>

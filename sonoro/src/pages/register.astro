@@ -1,0 +1,83 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import SonoroLogo from '@/components/ui/SonoroLogo.astro';
+import RegisterForm from '@/components/auth/RegisterForm';
+
+const plan = Astro.url.searchParams.get('plan') ?? undefined;
+---
+
+<BaseLayout
+  title="Create account – Sonoro"
+  description="Create your free Sonoro account and start converting PDFs to audiobooks."
+  noIndex={true}
+>
+  <div class="flex min-h-screen">
+    <!-- Left — form -->
+    <div class="flex flex-1 flex-col justify-center px-6 py-12 lg:px-12 xl:px-20">
+      <div class="mx-auto w-full max-w-sm">
+
+        <!-- Logo -->
+        <a href="/" class="flex items-center gap-2.5 mb-10 group w-fit">
+          <SonoroLogo class="h-7 w-7" />
+          <span class="text-lg font-bold text-sonoro-900 group-hover:text-sonoro-amber transition-colors">Sonoro</span>
+        </a>
+
+        {plan && plan !== 'free' && (
+          <div class="mb-6 rounded-xl border border-sonoro-amber/30 bg-sonoro-amber-light px-4 py-3">
+            <p class="text-sm font-semibold text-sonoro-amber-dark capitalize">{plan} plan selected</p>
+            <p class="text-xs text-sonoro-700 mt-0.5">Create your account to start your 14-day trial.</p>
+          </div>
+        )}
+
+        <h1 class="text-2xl font-bold text-sonoro-900 mb-1">Create your account</h1>
+        <p class="text-sm text-sonoro-muted mb-8">Free forever · No credit card required</p>
+
+        <!-- React island -->
+        <RegisterForm initialPlan={plan} client:load />
+
+        <p class="mt-6 text-center text-sm text-sonoro-muted">
+          Already have an account?{' '}
+          <a href="/login" class="font-semibold text-sonoro-900 hover:text-sonoro-amber transition-colors">
+            Sign in →
+          </a>
+        </p>
+      </div>
+    </div>
+
+    <!-- Right — value prop panel (desktop only) -->
+    <div class="hidden lg:flex flex-1 flex-col justify-center bg-sonoro-surface border-l border-sonoro-border px-16 py-12">
+      <p class="label-sm text-sonoro-amber-dark mb-6">What you'll get</p>
+
+      <ul class="space-y-5">
+        {[
+          { icon: '🎧', title: '5 free conversions', body: 'Convert your first 5 PDFs at no cost, no time limit.' },
+          { icon: '⚡', title: 'Ready in 60 seconds', body: 'From upload to playback — faster than you can make a coffee.' },
+          { icon: '🔒', title: 'Your data stays yours', body: 'Encrypted storage. We never use your content for training.' },
+          { icon: '📱', title: 'Listen anywhere', body: 'Play in the browser or download MP3 for offline listening.' },
+        ].map(({ icon, title, body }) => (
+          <li class="flex items-start gap-4">
+            <span class="text-2xl shrink-0 mt-0.5">{icon}</span>
+            <div>
+              <p class="text-sm font-semibold text-sonoro-900">{title}</p>
+              <p class="text-sm text-sonoro-600 leading-relaxed">{body}</p>
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      <div class="mt-10 rounded-2xl bg-sonoro-white border border-sonoro-border p-5">
+        <div class="flex gap-0.5 mb-2">
+          {Array.from({ length: 5 }).map(() => (
+            <svg class="w-3.5 h-3.5 text-sonoro-amber" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/>
+            </svg>
+          ))}
+        </div>
+        <p class="text-sm text-sonoro-700 leading-relaxed">
+          "Signed up, uploaded a PDF, had an audiobook in under 2 minutes. Genuinely impressive."
+        </p>
+        <p class="text-xs text-sonoro-muted mt-2">— Marcus R., Strategy Consultant</p>
+      </div>
+    </div>
+  </div>
+</BaseLayout>

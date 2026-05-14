@@ -1,0 +1,160 @@
+---
+import type { TierConfig } from '@/lib/api/types';
+
+export interface Props {
+  tiers: TierConfig[];
+}
+
+const { tiers } = Astro.props;
+
+// Fallback static tiers if API unavailable at render time
+const fallbackTiers: TierConfig[] = [
+  {
+    tier: 'FREE', monthly_price_usd: 0, annual_price_usd: 0, annual_savings_usd: 0,
+    limits: { monthly_chars: 10_000, monthly_jobs: 5, concurrent_jobs: 1, storage_mb: 100, daily_api_calls: 100, api_calls_per_minute: 10 },
+    features: ['Basic voices', 'Browser playback'], max_team_members: 1, trial_days: 0, upgrades_to: 'BASIC',
+  },
+  {
+    tier: 'BASIC', monthly_price_usd: 9, annual_price_usd: 86.40, annual_savings_usd: 21.60,
+    limits: { monthly_chars: 100_000, monthly_jobs: 50, concurrent_jobs: 2, storage_mb: 2_000, daily_api_calls: 1_000, api_calls_per_minute: 30 },
+    features: ['HD voices', 'MP3 download', 'Priority support'], max_team_members: 1, trial_days: 14, upgrades_to: 'PRO',
+  },
+  {
+    tier: 'PRO', monthly_price_usd: 29, annual_price_usd: 278.40, annual_savings_usd: 69.60,
+    limits: { monthly_chars: 500_000, monthly_jobs: 200, concurrent_jobs: 5, storage_mb: 10_000, daily_api_calls: 10_000, api_calls_per_minute: 100 },
+    features: ['All voices', 'API access', 'Team sharing', 'Advanced analytics', 'Priority processing'], max_team_members: 5, trial_days: 14, upgrades_to: 'ENTERPRISE',
+  },
+  {
+    tier: 'ENTERPRISE', monthly_price_usd: 99, annual_price_usd: 950.40, annual_savings_usd: 237.60,
+    limits: { monthly_chars: -1, monthly_jobs: -1, concurrent_jobs: 20, storage_mb: -1, daily_api_calls: -1, api_calls_per_minute: 500 },
+    features: ['Unlimited everything', 'SSO/SAML', 'SLA guarantee', 'Dedicated support', 'Custom voices', 'Bulk API'], max_team_members: 100, trial_days: 14,
+  },
+];
+
+const displayTiers = tiers.length > 0 ? tiers : fallbackTiers;
+const highlight = 'PRO';
+
+function fmtChars(n: number) {
+  if (n < 0) return 'Unlimited';
+  if (n >= 1_000_000) return `${n / 1_000_000}M`;
+  if (n >= 1_000) return `${n / 1_000}K`;
+  return String(n);
+}
+
+function fmtJobs(n: number) {
+  return n < 0 ? 'Unlimited' : String(n);
+}
+
+function fmtStorage(mb: number) {
+  if (mb < 0) return 'Unlimited';
+  if (mb >= 1_000) return `${mb / 1_000} GB`;
+  return `${mb} MB`;
+}
+---
+
+<section id="pricing" class="section-padding bg-sonoro-surface">
+  <div class="mx-auto max-w-7xl px-6 lg:px-8">
+
+    <div class="text-center mb-14 reveal">
+      <p class="label-sm text-sonoro-amber-dark mb-4">Simple pricing</p>
+      <h2 class="heading-section">Pay for what you use</h2>
+      <p class="body-lg mt-4 max-w-lg mx-auto">
+        Start free. Upgrade when you need more. Cancel anytime.
+      </p>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+      {displayTiers.map((tier) => {
+        const isHighlight = tier.tier === highlight;
+        const price = tier.monthly_price_usd;
+
+        return (
+          <div
+            class:list={[
+              'relative flex flex-col rounded-2xl p-6 reveal',
+              isHighlight
+                ? 'bg-sonoro-black text-sonoro-white shadow-modal border border-sonoro-800'
+                : 'bg-sonoro-white border border-sonoro-border shadow-card',
+            ]}
+          >
+            {isHighlight && (
+              <div class="badge-pro absolute -top-3 left-1/2 -translate-x-1/2 text-xs font-bold px-3 py-1">
+                Most popular
+              </div>
+            )}
+
+            <!-- Tier name & price -->
+            <div class="mb-6">
+              <p class:list={['label-sm mb-1', isHighlight ? 'text-sonoro-400' : '']}>
+                {tier.tier}
+              </p>
+              <div class="flex items-baseline gap-1">
+                <span class="text-4xl font-bold tracking-tight">
+                  {price === 0 ? 'Free' : `$${price}`}
+                </span>
+                {price > 0 && (
+                  <span class:list={['text-sm', isHighlight ? 'text-sonoro-400' : 'text-sonoro-muted']}>
+                    /mo
+                  </span>
+                )}
+              </div>
+              {price > 0 && (
+                <p class:list={['text-xs mt-1', isHighlight ? 'text-sonoro-400' : 'text-sonoro-muted']}>
+                  ${(tier.annual_price_usd / 12).toFixed(2)}/mo billed annually
+                </p>
+              )}
+            </div>
+
+            <!-- Limits -->
+            <ul class:list={['space-y-2.5 mb-6 flex-1 text-sm', isHighlight ? 'text-sonoro-300' : 'text-sonoro-600']}>
+              <li class="flex items-center gap-2">
+                <svg class:list={['w-3.5 h-3.5 shrink-0', isHighlight ? 'text-sonoro-amber' : 'text-green-500']} viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                  <path fill-rule="evenodd" d="M12.416 3.376a.75.75 0 0 1 .208 1.04l-5 7.5a.75.75 0 0 1-1.154.114l-3-3a.75.75 0 0 1 1.06-1.06l2.353 2.353 4.493-6.74a.75.75 0 0 1 1.04-.207Z" clip-rule="evenodd"/>
+                </svg>
+                {fmtChars(tier.limits.monthly_chars)} chars / mo
+              </li>
+              <li class="flex items-center gap-2">
+                <svg class:list={['w-3.5 h-3.5 shrink-0', isHighlight ? 'text-sonoro-amber' : 'text-green-500']} viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                  <path fill-rule="evenodd" d="M12.416 3.376a.75.75 0 0 1 .208 1.04l-5 7.5a.75.75 0 0 1-1.154.114l-3-3a.75.75 0 0 1 1.06-1.06l2.353 2.353 4.493-6.74a.75.75 0 0 1 1.04-.207Z" clip-rule="evenodd"/>
+                </svg>
+                {fmtJobs(tier.limits.monthly_jobs)} conversions / mo
+              </li>
+              <li class="flex items-center gap-2">
+                <svg class:list={['w-3.5 h-3.5 shrink-0', isHighlight ? 'text-sonoro-amber' : 'text-green-500']} viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                  <path fill-rule="evenodd" d="M12.416 3.376a.75.75 0 0 1 .208 1.04l-5 7.5a.75.75 0 0 1-1.154.114l-3-3a.75.75 0 0 1 1.06-1.06l2.353 2.353 4.493-6.74a.75.75 0 0 1 1.04-.207Z" clip-rule="evenodd"/>
+                </svg>
+                {fmtStorage(tier.limits.storage_mb)} storage
+              </li>
+              {tier.features.map((f) => (
+                <li class="flex items-center gap-2">
+                  <svg class:list={['w-3.5 h-3.5 shrink-0', isHighlight ? 'text-sonoro-amber' : 'text-green-500']} viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                    <path fill-rule="evenodd" d="M12.416 3.376a.75.75 0 0 1 .208 1.04l-5 7.5a.75.75 0 0 1-1.154.114l-3-3a.75.75 0 0 1 1.06-1.06l2.353 2.353 4.493-6.74a.75.75 0 0 1 1.04-.207Z" clip-rule="evenodd"/>
+                  </svg>
+                  {f}
+                </li>
+              ))}
+            </ul>
+
+            <!-- CTA -->
+            <a
+              href={price === 0 ? '/register' : `/register?plan=${tier.tier.toLowerCase()}`}
+              class:list={[
+                'w-full text-center rounded-full py-2.5 text-sm font-semibold transition-all duration-150 active:scale-[0.98]',
+                isHighlight
+                  ? 'bg-sonoro-amber text-sonoro-black hover:bg-sonoro-amber-dark'
+                  : 'bg-sonoro-black text-sonoro-white hover:bg-sonoro-800',
+              ]}
+            >
+              {price === 0 ? 'Get started free' : `Start ${tier.trial_days}-day trial`}
+            </a>
+          </div>
+        );
+      })}
+    </div>
+
+    <p class="text-center text-xs text-sonoro-muted mt-8">
+      All paid plans include a {14}-day free trial. Cancel any time. No questions asked.
+    </p>
+
+  </div>
+</section>

@@ -1,0 +1,33 @@
+---
+import DashboardLayout from '@/layouts/DashboardLayout.astro';
+import DocumentList from '@/components/dashboard/DocumentList';
+import { fetchDocuments } from '@/lib/api/server';
+import type { Document } from '@/lib/api/types';
+
+const token = (Astro.locals as any).token as string;
+
+let documents: Document[] = [];
+try {
+  documents = await fetchDocuments(token);
+} catch {
+  // handled via empty state in DocumentList
+}
+---
+
+<DashboardLayout title="My Library – Sonoro" activeNav="documents">
+  <div class="mb-6 flex items-center justify-between">
+    <div>
+      <h1 class="text-2xl font-bold text-sonoro-900 mb-1">My Library</h1>
+      <p class="text-sm text-sonoro-muted">{documents.length} audiobook{documents.length !== 1 ? 's' : ''}</p>
+    </div>
+    <a href="/dashboard/upload" class="btn-accent btn-sm">
+      <svg class="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M8 2v9M4 7l4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M2 13h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      Upload PDF
+    </a>
+  </div>
+
+  <DocumentList initialDocuments={documents} client:load />
+</DashboardLayout>

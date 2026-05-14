@@ -1,0 +1,65 @@
+---
+const features = [
+  {
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    title: 'Upload any PDF',
+    body:  'Textbooks, research papers, reports, novels — Sonoro handles any PDF up to 500 pages with perfect fidelity.',
+  },
+  {
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    title: 'AI chapter detection',
+    body:  'Smart chapter detection automatically segments long documents so you can navigate, skip, or replay exactly what you need.',
+  },
+  {
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M15.536 8.464a5 5 0 010 7.072M12 9.5l-3 3h-2v2h2l3 3V9.5zm6.364-4.364a9 9 0 010 12.728" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    title: 'Natural-sounding voices',
+    body:  'Neural TTS voices that sound genuinely human — clear, paced, and easy to listen to for hours.',
+  },
+  {
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    title: 'Download & listen offline',
+    body:  'Export your audiobook as an MP3 or listen directly in the browser. Yours to keep, wherever you go.',
+  },
+  {
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    title: 'Ready in under 60 seconds',
+    body:  'From upload to playback in under a minute. Our parallel processing pipeline is built for speed.',
+  },
+  {
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    title: 'Private & secure',
+    body:  'Your documents are encrypted in transit and at rest. We never train on your content.',
+  },
+];
+---
+
+<section id="features" class="section-padding bg-sonoro-white">
+  <div class="mx-auto max-w-7xl px-6 lg:px-8">
+
+    <div class="text-center mb-16 reveal">
+      <p class="label-sm text-sonoro-amber-dark mb-4">Everything you need</p>
+      <h2 class="heading-section">
+        Built for serious listeners
+      </h2>
+      <p class="body-lg mt-4 max-w-xl mx-auto">
+        Every feature is designed to get you from PDF to audio as fast and effortlessly as possible.
+      </p>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      {features.map(({ icon, title, body }, i) => (
+        <div
+          class="card-base p-7 reveal"
+          style={`transition-delay: ${i * 80}ms`}
+        >
+          <div class="flex h-11 w-11 items-center justify-center rounded-xl bg-sonoro-amber-light text-sonoro-amber-dark mb-5">
+            <div class="w-5 h-5" set:html={icon}></div>
+          </div>
+          <h3 class="text-base font-semibold text-sonoro-900 mb-2">{title}</h3>
+          <p class="text-sm text-sonoro-600 leading-relaxed">{body}</p>
+        </div>
+      ))}
+    </div>
+
+  </div>
+</section>

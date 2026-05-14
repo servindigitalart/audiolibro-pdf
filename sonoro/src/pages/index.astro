@@ -1,0 +1,44 @@
+---
+export const prerender = true;
+
+import MarketingLayout from '@/layouts/MarketingLayout.astro';
+import Hero from '@/components/marketing/Hero.astro';
+import SocialProof from '@/components/marketing/SocialProof.astro';
+import Features from '@/components/marketing/Features.astro';
+import HowItWorks from '@/components/marketing/HowItWorks.astro';
+import Testimonials from '@/components/marketing/Testimonials.astro';
+import PricingSection from '@/components/marketing/PricingSection.astro';
+import CTA from '@/components/marketing/CTA.astro';
+import { fetchTierCatalog } from '@/lib/api/server';
+import type { TierConfig } from '@/lib/api/types';
+
+// Fetch live pricing at build time (SSG)
+let tiers: TierConfig[] = [];
+try {
+  tiers = await fetchTierCatalog();
+} catch {
+  // Falls back to static tiers defined in PricingSection
+}
+---
+
+<MarketingLayout
+  title="Sonoro – Turn PDFs into Audiobooks Instantly"
+  description="Convert any PDF into a professional audiobook in seconds. Upload a textbook, report, or paper — Sonoro handles the rest. Free to start."
+>
+  <!--
+    Page structure order mirrors a conversion funnel:
+    1. Hook (Hero)
+    2. Trust (SocialProof)
+    3. Educate (Features, HowItWorks)
+    4. Validate (Testimonials)
+    5. Convert (Pricing, CTA)
+  -->
+
+  <Hero />
+  <SocialProof />
+  <Features />
+  <HowItWorks />
+  <Testimonials />
+  <PricingSection tiers={tiers} />
+  <CTA />
+</MarketingLayout>

@@ -1,0 +1,40 @@
+---
+import BaseLayout from './BaseLayout.astro';
+import DashboardSidebar from '@/components/nav/DashboardSidebar.astro';
+import DashboardHeader from '@/components/nav/DashboardHeader.astro';
+import { fetchAccountOverview } from '@/lib/api/server';
+
+export interface Props {
+  title?: string;
+  activeNav?: string;
+}
+
+const { title = 'Dashboard – Sonoro', activeNav = 'dashboard' } = Astro.props;
+const token = (Astro.locals as any).token as string;
+
+let overview = null;
+try {
+  overview = await fetchAccountOverview(token);
+} catch {
+  // Non-fatal; sidebar renders without usage data
+}
+
+const user = overview?.user ?? null;
+const usage = overview?.usage ?? null;
+---
+
+<BaseLayout title={title} noIndex={true}>
+  <div class="flex h-screen overflow-hidden bg-sonoro-surface">
+    <!-- Sidebar -->
+    <DashboardSidebar activeNav={activeNav} user={user} usage={usage} />
+
+    <!-- Main content area -->
+    <div class="flex flex-1 flex-col overflow-hidden">
+      <DashboardHeader user={user} />
+
+      <main class="flex-1 overflow-y-auto p-6 md:p-8">
+        <slot />
+      </main>
+    </div>
+  </div>
+</BaseLayout>

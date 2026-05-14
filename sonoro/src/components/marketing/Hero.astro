@@ -1,0 +1,127 @@
+---
+// Hero — conversion-optimized, SEO-loaded, visually premium
+---
+
+<section class="relative overflow-hidden bg-sonoro-white">
+  <!-- Subtle grid pattern -->
+  <div class="absolute inset-0 bg-grid opacity-60 pointer-events-none" aria-hidden="true"></div>
+
+  <!-- Radial gradient glow -->
+  <div
+    class="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[500px] rounded-full opacity-20 blur-3xl pointer-events-none"
+    style="background: radial-gradient(ellipse at center, #FEF3C7 0%, transparent 70%);"
+    aria-hidden="true"
+  ></div>
+
+  <div class="relative mx-auto max-w-7xl px-6 pt-16 pb-24 text-center lg:px-8 lg:pt-24 lg:pb-32">
+
+    <!-- Category label -->
+    <div class="inline-flex items-center gap-2 rounded-full border border-sonoro-amber/30 bg-sonoro-amber-light px-4 py-1.5 text-xs font-semibold text-sonoro-amber-dark mb-8">
+      <span class="flex h-1.5 w-1.5 rounded-full bg-sonoro-amber animate-pulse"></span>
+      PDF → Audiobook conversion
+    </div>
+
+    <!-- Headline — packed with primary SEO keywords -->
+    <h1 class="heading-display text-display-xl md:text-display-2xl text-balance mx-auto max-w-4xl">
+      Turn any PDF into an<br />
+      <span class="gradient-text-amber">audiobook</span>
+      &nbsp;instantly.
+    </h1>
+
+    <!-- Subheadline -->
+    <p class="body-lg mt-6 max-w-2xl mx-auto text-balance">
+      Upload your PDF, we handle the rest. Sonoro converts textbooks, reports, and papers
+      into crisp, listenable audio — in under 60 seconds.
+    </p>
+
+    <!-- CTAs -->
+    <div class="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
+      <a
+        href="/register"
+        class="btn-accent btn-lg shadow-hover group"
+        data-event="hero_cta_click"
+      >
+        <svg class="w-4 h-4" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Start for free
+      </a>
+      <a
+        href="/#how"
+        class="btn-outline btn-lg group"
+      >
+        <svg class="w-4 h-4" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.3"/>
+          <path d="M6.5 5.5L10.5 8l-4 2.5V5.5z" fill="currentColor"/>
+        </svg>
+        See how it works
+      </a>
+    </div>
+
+    <!-- Social proof nudge -->
+    <p class="mt-8 text-sm text-sonoro-muted">
+      No credit card required · Free tier forever · Loved by <strong class="text-sonoro-700">2,400+</strong> students &amp; professionals
+    </p>
+
+    <!-- Product visual — mock audiobook player -->
+    <div class="mt-16 mx-auto max-w-2xl reveal">
+      <div class="card-base p-6 text-left shadow-modal">
+        <!-- File strip -->
+        <div class="flex items-center gap-3 mb-5 pb-5 border-b border-sonoro-border">
+          <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-red-50 border border-red-100 shrink-0">
+            <svg class="w-5 h-5 text-red-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V7l-4-4H4zm8 0v4h4M9 13a1 1 0 102 0 1 1 0 00-2 0zm-1-3h4v1H8v-1z"/>
+            </svg>
+          </div>
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-medium text-sonoro-900 truncate">Introduction_to_Machine_Learning.pdf</p>
+            <p class="text-xs text-sonoro-muted mt-0.5">284 pages · 1.4 MB</p>
+          </div>
+          <div class="badge badge-success shrink-0">
+            <span class="h-1.5 w-1.5 rounded-full bg-green-500"></span>
+            Ready
+          </div>
+        </div>
+
+        <!-- Audio player mock -->
+        <div>
+          <p class="text-xs label-sm mb-3">Now playing</p>
+          <p class="text-sm font-semibold text-sonoro-900 mb-4">Chapter 3 — Neural Networks &amp; Deep Learning</p>
+
+          <!-- Waveform bars -->
+          <div class="flex items-end gap-1 h-10 mb-4">
+            {[40, 70, 55, 90, 65, 45, 80, 60, 75, 50, 85, 40, 65, 90, 55, 70, 45, 80, 60, 75].map((h) => (
+              <div
+                class="waveform-bar"
+                style={`height: ${h}%; animation-delay: ${Math.random().toFixed(2)}s;`}
+              ></div>
+            ))}
+          </div>
+
+          <!-- Progress -->
+          <div class="flex items-center gap-3">
+            <span class="text-xs text-sonoro-muted">12:34</span>
+            <div class="flex-1 h-1.5 rounded-full bg-sonoro-border overflow-hidden">
+              <div class="h-full w-[38%] rounded-full bg-sonoro-amber"></div>
+            </div>
+            <span class="text-xs text-sonoro-muted">32:50</span>
+          </div>
+
+          <!-- Controls -->
+          <div class="flex items-center justify-center gap-6 mt-5">
+            <button class="text-sonoro-muted hover:text-sonoro-900 transition-colors" aria-label="Previous chapter">
+              <svg class="w-5 h-5" viewBox="0 0 20 20" fill="currentColor"><path d="M4 5h2v10H4V5zm3.586 4.408L13 5.587A1 1 0 0115 6.179v7.642a1 1 0 01-1.414.908l-5.414-3.22a1 1 0 010-1.101z"/></svg>
+            </button>
+            <button class="flex h-11 w-11 items-center justify-center rounded-full bg-sonoro-black text-sonoro-white hover:bg-sonoro-800 transition-colors shadow-card" aria-label="Pause">
+              <svg class="w-5 h-5" viewBox="0 0 20 20" fill="currentColor"><path d="M5 4h3v12H5V4zm7 0h3v12h-3V4z"/></svg>
+            </button>
+            <button class="text-sonoro-muted hover:text-sonoro-900 transition-colors" aria-label="Next chapter">
+              <svg class="w-5 h-5" viewBox="0 0 20 20" fill="currentColor"><path d="M16 5h-2v10h2V5zm-9 .587A1 1 0 005 6.179v7.642a1 1 0 001.414.908l5.414-3.22a1 1 0 000-1.101L7 5.587z"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>

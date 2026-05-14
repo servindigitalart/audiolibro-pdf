@@ -1,0 +1,116 @@
+---
+import DashboardLayout from '@/layouts/DashboardLayout.astro';
+import { fetchAccountOverview } from '@/lib/api/server';
+
+const token   = (Astro.locals as any).token as string;
+const overview = await fetchAccountOverview(token).catch(() => null);
+if (!overview) return Astro.redirect('/login');
+const { user } = overview;
+---
+
+<DashboardLayout title="Settings – Sonoro" activeNav="settings">
+  <div class="max-w-2xl">
+    <div class="mb-8">
+      <h1 class="text-2xl font-bold text-sonoro-900 mb-1">Settings</h1>
+      <p class="text-sm text-sonoro-muted">Manage your account and preferences.</p>
+    </div>
+
+    <div class="space-y-5">
+
+      <!-- Profile -->
+      <section class="card-base p-6">
+        <h2 class="text-sm font-semibold text-sonoro-900 mb-5">Profile</h2>
+        <dl class="space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <dt class="text-xs text-sonoro-muted mb-0.5">Email address</dt>
+              <dd class="text-sm font-medium text-sonoro-900">{user.email}</dd>
+            </div>
+            <span class="badge badge-neutral">Verified</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <div>
+              <dt class="text-xs text-sonoro-muted mb-0.5">Plan</dt>
+              <dd class="text-sm font-medium text-sonoro-900">{user.plan_tier}</dd>
+            </div>
+            <a href="/dashboard/billing" class="text-xs font-semibold text-sonoro-amber-dark hover:text-sonoro-amber transition-colors">
+              Manage →
+            </a>
+          </div>
+          <div>
+            <dt class="text-xs text-sonoro-muted mb-0.5">Member since</dt>
+            <dd class="text-sm font-medium text-sonoro-900">
+              {new Date(user.created_at).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+            </dd>
+          </div>
+        </dl>
+      </section>
+
+      <!-- Password -->
+      <section class="card-base p-6">
+        <h2 class="text-sm font-semibold text-sonoro-900 mb-1">Password</h2>
+        <p class="text-xs text-sonoro-muted mb-5">Use a strong password that you don't use elsewhere.</p>
+        <form method="POST" action="/api/auth/change-password" class="space-y-4">
+          <div>
+            <label for="current-pw" class="block text-xs font-medium text-sonoro-700 mb-1.5">Current password</label>
+            <input id="current-pw" name="current_password" type="password" class="input-base" required />
+          </div>
+          <div>
+            <label for="new-pw" class="block text-xs font-medium text-sonoro-700 mb-1.5">New password</label>
+            <input id="new-pw" name="new_password" type="password" class="input-base" minlength="8" required />
+          </div>
+          <button type="submit" class="btn-primary btn-sm">Update password</button>
+        </form>
+      </section>
+
+      <!-- Notifications -->
+      <section class="card-base p-6">
+        <h2 class="text-sm font-semibold text-sonoro-900 mb-1">Notifications</h2>
+        <p class="text-xs text-sonoro-muted mb-5">Choose which emails you receive.</p>
+        <div class="space-y-3">
+          {[
+            { id: 'notif-conversion', label: 'Conversion complete', desc: 'Email when your PDF is ready to play', checked: true },
+            { id: 'notif-quota',      label: 'Quota warnings',       desc: 'Alert when approaching usage limits',  checked: true },
+            { id: 'notif-product',    label: 'Product updates',       desc: 'News about new features',              checked: false },
+          ].map(({ id, label, desc, checked }) => (
+            <label for={id} class="flex items-start gap-3 cursor-pointer group">
+              <input
+                type="checkbox"
+                id={id}
+                name={id}
+                checked={checked}
+                class="mt-0.5 h-4 w-4 rounded border-sonoro-border text-sonoro-amber accent-sonoro-amber focus:ring-sonoro-amber/30"
+              />
+              <div>
+                <p class="text-xs font-medium text-sonoro-900 group-hover:text-sonoro-700">{label}</p>
+                <p class="text-xs text-sonoro-muted">{desc}</p>
+              </div>
+            </label>
+          ))}
+        </div>
+        <button class="btn-outline btn-sm mt-5">Save preferences</button>
+      </section>
+
+      <!-- Danger zone -->
+      <section class="rounded-2xl border border-red-200 bg-red-50/50 p-6">
+        <h2 class="text-sm font-semibold text-red-700 mb-1">Danger zone</h2>
+        <p class="text-xs text-red-600 mb-5">These actions are irreversible. Please be certain.</p>
+        <div class="flex flex-col sm:flex-row gap-3">
+          <button
+            onclick="return confirm('Delete all your documents and audiobooks? This cannot be undone.')"
+            class="rounded-full border border-red-300 bg-white px-4 py-2 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors"
+          >
+            Delete all documents
+          </button>
+          <button
+            onclick="return confirm('Permanently delete your account? All data will be lost.')"
+            class="rounded-full border border-red-400 bg-red-600 px-4 py-2 text-xs font-medium text-white hover:bg-red-700 transition-colors"
+          >
+            Delete account
+          </button>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</DashboardLayout>

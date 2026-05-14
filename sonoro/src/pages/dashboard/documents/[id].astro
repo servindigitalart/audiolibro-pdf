@@ -1,0 +1,83 @@
+---
+import DashboardLayout from '@/layouts/DashboardLayout.astro';
+import AudioPlayer from '@/components/dashboard/AudioPlayer';
+import { fetchDocument } from '@/lib/api/server';
+import type { Chapter } from '@/lib/api/types';
+
+const token = (Astro.locals as any).token as string;
+const { id } = Astro.params;
+
+if (!id) return Astro.redirect('/dashboard/documents');
+
+let document = null;
+let chapters: Chapter[] = [];
+
+try {
+  [document, chapters] = await Promise.all([
+    fetchDocument(token, id),
+    fetch(`${import.meta.env.PUBLIC_API_URL}/documents/${id}/chapters`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then((r) => r.ok ? r.json() : []).catch(() => []),
+  ]);
+} catch {
+  return Astro.redirect('/dashboard/documents');
+}
+
+import { fmtDate, fmtFileSize, fmtDuration } from '@/lib/utils';
+
+const duration = document.metadata?.duration_seconds;
+---
+
+<DashboardLayout title={`${document.title || document.filename} – Sonoro`} activeNav="documents">
+  <!-- Breadcrumb -->
+  <nav class="flex items-center gap-2 text-xs text-sonoro-muted mb-6" aria-label="Breadcrumb">
+    <a href="/dashboard" class="hover:text-sonoro-900 transition-colors">Dashboard</a>
+    <span aria-hidden="true">/</span>
+    <a href="/dashboard/documents" class="hover:text-sonoro-900 transition-colors">Library</a>
+    <span aria-hidden="true">/</span>
+    <span class="text-sonoro-700 truncate max-w-xs">{document.title || document.filename}</span>
+  </nav>
+
+  <div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
+    <!-- Player — 3 cols -->
+    <div class="lg:col-span-3">
+      <AudioPlayer chapters={chapters} documentTitle={document.title || document.filename} client:load />
+    </div>
+
+    <!-- Metadata — 2 cols -->
+    <div class="lg:col-span-2 space-y-4">
+      <div class="card-base p-5">
+        <h2 class="text-sm font-semibold text-sonoro-900 mb-4">Document info</h2>
+        <dl class="space-y-3">
+          {[
+            { label: 'Filename',   value: document.filename },
+            { label: 'File size',  value: fmtFileSize(document.file_size) },
+            { label: 'Pages',      value: document.metadata?.pages ?? '—' },
+            { label: 'Chapters',   value: (chapters.length || document.metadata?.chapters) ?? '—' },
+            { label: 'Duration',   value: duration ? fmtDuration(duration) : '—' },
+            { label: 'Uploaded',   value: fmtDate(document.upload_date) },
+          ].map(({ label, value }) => (
+            <div class="flex justify-between gap-4">
+              <dt class="text-xs text-sonoro-muted shrink-0">{label}</dt>
+              <dd class="text-xs font-medium text-sonoro-800 text-right truncate">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+
+      <!-- Download -->
+      {document.status === 'completed' && document.audiobook_url && (
+        <a
+          href={document.audiobook_url}
+          download
+          class="btn-outline w-full justify-center btn-lg"
+        >
+          <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"/>
+          </svg>
+          Download MP3
+        </a>
+      )}
+    </div>
+  </div>
+</DashboardLayout>

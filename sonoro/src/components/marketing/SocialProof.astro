@@ -1,0 +1,43 @@
+---
+const stats = [
+  { value: '2,400+', label: 'Users worldwide' },
+  { value: '180K+',  label: 'PDFs converted' },
+  { value: '< 60s',  label: 'Average conversion' },
+  { value: '4.9★',   label: 'Average rating' },
+];
+
+const logos = [
+  'MIT',
+  'Stanford',
+  'Y Combinator',
+  'McKinsey',
+  'Oxford',
+  'Notion',
+];
+---
+
+<section class="border-y border-sonoro-border bg-sonoro-surface py-14">
+  <div class="mx-auto max-w-7xl px-6 lg:px-8">
+
+    <!-- Stats -->
+    <dl class="grid grid-cols-2 gap-x-8 gap-y-10 md:grid-cols-4 text-center mb-14">
+      {stats.map(({ value, label }) => (
+        <div>
+          <dt class="text-display-md font-bold text-sonoro-900 tracking-tight">{value}</dt>
+          <dd class="mt-1 text-sm text-sonoro-muted">{label}</dd>
+        </div>
+      ))}
+    </dl>
+
+    <!-- Used at -->
+    <p class="label-sm text-center mb-8">Trusted by people at</p>
+    <ul class="flex flex-wrap items-center justify-center gap-x-10 gap-y-4">
+      {logos.map((name) => (
+        <li class="text-sm font-semibold text-sonoro-400 hover:text-sonoro-700 transition-colors">
+          {name}
+        </li>
+      ))}
+    </ul>
+
+  </div>
+</section>

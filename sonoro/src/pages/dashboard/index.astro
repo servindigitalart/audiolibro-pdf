@@ -1,0 +1,89 @@
+---
+import DashboardLayout from '@/layouts/DashboardLayout.astro';
+import DocumentList from '@/components/dashboard/DocumentList';
+import { fetchDocuments, fetchAccountOverview } from '@/lib/api/server';
+
+
+const token = (Astro.locals as any).token as string;
+
+const [documents, overview] = await Promise.all([
+  fetchDocuments(token).catch(() => []),
+  fetchAccountOverview(token).catch(() => null),
+]);
+
+const user  = overview?.user;
+const usage = overview?.usage;
+
+const completed   = documents.filter((d) => d.status === 'completed').length;
+const processing  = documents.filter((d) => d.status === 'processing' || d.status === 'pending').length;
+const charPct     = usage ? Math.round((usage.chars_used / usage.chars_limit) * 100) : 0;
+
+// Greeting based on time of day
+const hour = new Date().getHours();
+const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+---
+
+<DashboardLayout title="Dashboard – Sonoro" activeNav="dashboard">
+  <!-- Header -->
+  <div class="mb-8">
+    <h1 class="text-2xl font-bold text-sonoro-900 mb-1">
+      {greeting}{user ? `, ${user.email.split('@')[0]}` : ''} 👋
+    </h1>
+    <p class="text-sm text-sonoro-muted">Here's what's happening with your library.</p>
+  </div>
+
+  <!-- Stats grid -->
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+    {[
+      { label: 'Total audiobooks', value: documents.length, icon: '🎧' },
+      { label: 'Ready to play',    value: completed,        icon: '✅' },
+      { label: 'Processing',       value: processing,       icon: processing > 0 ? '⚡' : '—' },
+      { label: 'Chars used',       value: usage ? `${charPct}%` : '—', icon: charPct >= 80 ? '⚠️' : '📊', alert: charPct >= 80 },
+    ].map(({ label, value, icon, alert }) => (
+      <div class:list={['card-base p-5', alert ? 'border-amber-300 bg-amber-50' : '']}>
+        <p class="text-xl mb-0.5">{icon}</p>
+        <p class:list={['text-2xl font-bold tracking-tight', alert ? 'text-amber-800' : 'text-sonoro-900']}>{value}</p>
+        <p class:list={['text-xs mt-0.5', alert ? 'text-amber-700' : 'text-sonoro-muted']}>{label}</p>
+      </div>
+    ))}
+  </div>
+
+  <!-- Quota warning -->
+  {charPct >= 80 && (
+    <div class="mb-6 rounded-xl border border-amber-300 bg-amber-50 px-5 py-4 flex items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-amber-800">You're at {charPct}% of your character quota</p>
+        <p class="text-xs text-amber-700 mt-0.5">Upgrade to keep converting PDFs without interruption.</p>
+      </div>
+      <a href="/dashboard/billing" class="btn-accent btn-sm shrink-0">Upgrade</a>
+    </div>
+  )}
+
+  <!-- Upload CTA if empty -->
+  {documents.length === 0 && (
+    <div class="card-base p-10 text-center mb-8">
+      <p class="text-3xl mb-4">📄</p>
+      <h2 class="text-lg font-semibold text-sonoro-900 mb-2">Upload your first PDF</h2>
+      <p class="text-sm text-sonoro-muted mb-6 max-w-sm mx-auto">
+        Drag and drop any PDF and we'll turn it into a professional audiobook in under 60 seconds.
+      </p>
+      <a href="/dashboard/upload" class="btn-accent btn-lg inline-flex">
+        Upload a PDF now
+      </a>
+    </div>
+  )}
+
+  <!-- Document library -->
+  {documents.length > 0 && (
+    <div>
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-base font-semibold text-sonoro-900">Your library</h2>
+        <a href="/dashboard/documents" class="text-sm text-sonoro-amber-dark hover:text-sonoro-amber transition-colors">
+          View all →
+        </a>
+      </div>
+      <!-- Show latest 5 -->
+      <DocumentList initialDocuments={documents.slice(0, 5)} client:load />
+    </div>
+  )}
+</DashboardLayout>

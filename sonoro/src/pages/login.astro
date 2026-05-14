@@ -1,0 +1,82 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import SonoroLogo from '@/components/ui/SonoroLogo.astro';
+import LoginForm from '@/components/auth/LoginForm';
+---
+
+<BaseLayout
+  title="Sign in – Sonoro"
+  description="Sign in to your Sonoro account."
+  noIndex={true}
+>
+  <div class="flex min-h-screen">
+    <!-- Left — form -->
+    <div class="flex flex-1 flex-col justify-center px-6 py-12 lg:px-12 xl:px-20">
+      <div class="mx-auto w-full max-w-sm">
+
+        <!-- Logo -->
+        <a href="/" class="flex items-center gap-2.5 mb-10 group w-fit">
+          <SonoroLogo class="h-7 w-7" />
+          <span class="text-lg font-bold text-sonoro-900 group-hover:text-sonoro-amber transition-colors">Sonoro</span>
+        </a>
+
+        <h1 class="text-2xl font-bold text-sonoro-900 mb-1">Welcome back</h1>
+        <p class="text-sm text-sonoro-muted mb-8">Sign in to your account to continue</p>
+
+        <!-- React island -->
+        <LoginForm client:load />
+
+        <p class="mt-6 text-center text-sm text-sonoro-muted">
+          Don't have an account?{' '}
+          <a href="/register" class="font-semibold text-sonoro-900 hover:text-sonoro-amber transition-colors">
+            Sign up free →
+          </a>
+        </p>
+      </div>
+    </div>
+
+    <!-- Right — decorative panel (desktop only) -->
+    <div class="hidden lg:flex flex-1 flex-col justify-center bg-sonoro-black px-16 py-12 relative overflow-hidden">
+      <!-- Glow -->
+      <div
+        class="absolute top-0 right-0 w-96 h-96 rounded-full opacity-20 blur-3xl"
+        style="background: radial-gradient(ellipse, #F59E0B 0%, transparent 70%);"
+        aria-hidden="true"
+      ></div>
+
+      <div class="relative z-10">
+        <!-- Waveform logo large -->
+        <div class="flex items-end gap-2 h-20 mb-10">
+          {[40, 70, 100, 80, 55, 90, 65, 45, 75, 60].map((h, i) => (
+            <div
+              class="waveform-bar w-2"
+              style={`height: ${h}%; animation-delay: ${i * 0.12}s;`}
+            ></div>
+          ))}
+        </div>
+
+        <h2 class="text-3xl font-bold text-sonoro-white mb-4 leading-tight">
+          Turn your reading list<br />into a playlist.
+        </h2>
+        <p class="text-sonoro-400 text-base leading-relaxed max-w-sm">
+          Over 2,400 students and professionals use Sonoro to convert PDFs into natural-sounding audiobooks.
+        </p>
+
+        <!-- Testimonial -->
+        <div class="mt-10 rounded-2xl border border-sonoro-800 bg-sonoro-900/50 p-5">
+          <div class="flex gap-0.5 mb-3">
+            {Array.from({ length: 5 }).map(() => (
+              <svg class="w-3.5 h-3.5 text-sonoro-amber" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/>
+              </svg>
+            ))}
+          </div>
+          <p class="text-sm text-sonoro-300 leading-relaxed">
+            "I listen to research papers on my commute. Sonoro changed how I consume knowledge."
+          </p>
+          <p class="text-xs text-sonoro-500 mt-3">— Sarah K., PhD Candidate at MIT</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</BaseLayout>
