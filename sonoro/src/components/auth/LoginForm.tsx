@@ -2,11 +2,21 @@ import { useState } from 'react';
 import { login, getErrorMessage } from '@/lib/api/client';
 import { cn } from '@/lib/utils';
 
-export default function LoginForm() {
+interface Props {
+  /** Post-auth destination forwarded from the page URL's ?next= param. */
+  googleNext?: string;
+}
+
+export default function LoginForm({ googleNext = '' }: Props) {
   const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
   const [error, setError]       = useState<string | null>(null);
   const [loading, setLoading]   = useState(false);
+
+  // Also surface any OAuth error from the callback redirect (?error=...)
+  const oauthError = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('error')
+    : null;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -14,7 +24,8 @@ export default function LoginForm() {
     setLoading(true);
     try {
       await login(email, password);
-      window.location.href = '/dashboard';
+      const next = googleNext || new URLSearchParams(window.location.search).get('next') || '/dashboard';
+      window.location.href = next.startsWith('/') ? next : '/dashboard';
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -22,11 +33,22 @@ export default function LoginForm() {
     }
   }
 
+  const googleHref = googleNext
+    ? `/api/auth/google?next=${encodeURIComponent(googleNext)}`
+    : '/api/auth/google';
+
   return (
     <div className="space-y-5">
+      {/* OAuth error feedback */}
+      {oauthError && oauthError !== 'cancelled' && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
+          <span className="font-medium">Google sign-in failed. </span>Please try again or use email.
+        </div>
+      )}
+
       {/* Google OAuth — primary CTA */}
       <a
-        href="/api/auth/google"
+        href={googleHref}
         className={cn(
           'flex w-full items-center justify-center gap-3 rounded-full border border-sonoro-border bg-sonoro-white px-5 py-3 text-sm font-medium text-sonoro-800',
           'hover:bg-sonoro-surface hover:border-sonoro-300 active:scale-[0.98]',

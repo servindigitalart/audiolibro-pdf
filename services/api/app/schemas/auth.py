@@ -125,7 +125,28 @@ class PasswordChangeRequest(BaseModel):
         return v
 
 
+class OAuthExchangeRequest(BaseModel):
+    """OAuth authorization code exchange request (server-to-server from Astro callback)."""
+
+    code: str = Field(..., description="Authorization code from the OAuth provider")
+    redirect_uri: str = Field(
+        ..., description="Redirect URI used in the original authorization request (must match exactly)"
+    )
+
+
+class OAuthTokenResponse(BaseModel):
+    """Token response for OAuth exchanges — extends standard tokens with new-user flag."""
+
+    access_token: str = Field(..., description="JWT access token")
+    refresh_token: str = Field(..., description="JWT refresh token")
+    token_type: str = Field(default="bearer", description="Token type")
+    expires_in: int = Field(..., description="Access token expiration in seconds")
+    is_new_user: bool = Field(
+        default=False, description="True when the account was created by this exchange"
+    )
+
+
 class MessageResponse(BaseModel):
     """Generic message response."""
-    
+
     message: str = Field(..., description="Response message")

@@ -34,9 +34,11 @@ export default function RegisterForm({ initialPlan }: Props) {
     }
   }
 
+  // For plan-selected registrations encode the destination so the OAuth
+  // callback lands on the billing upgrade page instead of generic onboarding.
   const googleHref = initialPlan
-    ? `/api/auth/google?plan=${initialPlan}`
-    : '/api/auth/google';
+    ? `/api/auth/google?next=${encodeURIComponent(`/onboarding?plan=${initialPlan}`)}`
+    : '/api/auth/google?next=/onboarding';
 
   return (
     <div className="space-y-5">

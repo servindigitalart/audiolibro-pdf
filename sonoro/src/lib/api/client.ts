@@ -1,6 +1,13 @@
 /**
  * Client-side API client — used in React islands.
- * Axios instance with JWT cookie injection + auto-refresh + redirect on 401.
+ * Axios instance with JWT cookie injection, silent token refresh, and 401 redirect.
+ *
+ * Cookie contract (must match the server-side callback and logout endpoints):
+ *   access_token  — short-lived (15 min), readable by JS, SameSite=Lax
+ *   refresh_token — long-lived  (7 days), readable by JS, SameSite=Lax
+ *
+ * The cookies are intentionally NOT httpOnly so this interceptor can
+ * read and rotate them without a server round-trip for every request.
  */
 
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios';
@@ -14,6 +21,7 @@ export const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+// Inject the access token as a Bearer header on every outbound request
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const token = Cookies.get('access_token');
   if (token && config.headers) {
@@ -22,6 +30,7 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   return config;
 });
 
+// On 401: attempt silent token rotation, then retry once; otherwise redirect to login
 api.interceptors.response.use(
   (r) => r,
   async (error: AxiosError) => {
@@ -33,20 +42,20 @@ api.interceptors.response.use(
       const refresh = Cookies.get('refresh_token');
       if (refresh) {
         try {
-          const { data } = await axios.post(`${BASE}/auth/refresh`, { refresh_token: refresh });
-          Cookies.set('access_token', data.access_token, { secure: true, sameSite: 'strict', expires: 1 / 48 });
-          if (data.refresh_token) {
-            Cookies.set('refresh_token', data.refresh_token, { secure: true, sameSite: 'strict', expires: 7 });
+          const { data } = await axios.post(`${BASE}/auth/refresh`, {
+            refresh_token: refresh,
+          });
+          setTokens(data.access_token, data.refresh_token);
+          if (original.headers) {
+            original.headers.Authorization = `Bearer ${data.access_token}`;
           }
-          if (original.headers) original.headers.Authorization = `Bearer ${data.access_token}`;
           return api(original);
         } catch {
-          // fall through to redirect
+          // Refresh failed — fall through to hard logout
         }
       }
 
-      Cookies.remove('access_token');
-      Cookies.remove('refresh_token');
+      clearTokens();
       window.location.href = '/login';
     }
 
@@ -57,10 +66,8 @@ api.interceptors.response.use(
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
 export async function login(email: string, password: string) {
-  const body = new URLSearchParams({ username: email, password });
-  const { data } = await api.post('/auth/login', body, {
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-  });
+  // JSON body — FastAPI LoginRequest expects { email, password }
+  const { data } = await api.post('/auth/login', { email, password });
   setTokens(data.access_token, data.refresh_token);
   return data;
 }
@@ -72,9 +79,12 @@ export async function register(email: string, password: string) {
 }
 
 export async function logout() {
-  try { await api.post('/auth/logout'); } catch {}
-  Cookies.remove('access_token');
-  Cookies.remove('refresh_token');
+  // Send the refresh token so the backend can delete the Redis JTI entry
+  const refresh = Cookies.get('refresh_token');
+  try {
+    await api.post('/auth/logout', { refresh_token: refresh ?? '' });
+  } catch {}
+  clearTokens();
 }
 
 export async function getMe() {
@@ -139,7 +149,10 @@ export async function getAccountOverview() {
   return data;
 }
 
-export async function createCheckoutSession(tier: string, interval: 'monthly' | 'annual' = 'monthly') {
+export async function createCheckoutSession(
+  tier: string,
+  interval: 'monthly' | 'annual' = 'monthly'
+) {
   const { data } = await api.post('/billing/checkout', { tier, interval });
   return data as { url: string };
 }
@@ -153,15 +166,21 @@ export async function createPortalSession() {
 
 function setTokens(accessToken: string, refreshToken: string) {
   const isProd = location.hostname !== 'localhost';
-  Cookies.set('access_token', accessToken,  { secure: isProd, sameSite: 'strict', expires: 1 / 48 });
-  Cookies.set('refresh_token', refreshToken, { secure: isProd, sameSite: 'strict', expires: 7 });
+  // SameSite=Lax: consistent with the server-side OAuth callback cookies
+  Cookies.set('access_token',  accessToken,  { secure: isProd, sameSite: 'Lax', expires: 1 / 48 });
+  Cookies.set('refresh_token', refreshToken, { secure: isProd, sameSite: 'Lax', expires: 7 });
+}
+
+function clearTokens() {
+  Cookies.remove('access_token');
+  Cookies.remove('refresh_token');
 }
 
 export function getErrorMessage(err: unknown): string {
   if (axios.isAxiosError(err)) {
     const d = err.response?.data;
-    if (typeof d?.detail === 'string') return d.detail;
-    if (Array.isArray(d?.detail)) return d.detail[0]?.msg ?? 'Validation error';
+    if (typeof d?.detail === 'string')  return d.detail;
+    if (Array.isArray(d?.detail))       return d.detail[0]?.msg ?? 'Validation error';
     return err.message;
   }
   return err instanceof Error ? err.message : 'An unknown error occurred';

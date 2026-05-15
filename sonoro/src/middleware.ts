@@ -1,19 +1,26 @@
 import { defineMiddleware } from 'astro:middleware';
 
+// Routes that require an authenticated session
 const PROTECTED = ['/dashboard', '/onboarding'];
-const AUTH_ONLY = ['/login', '/register'];   // redirect to dashboard if already logged in
+
+// Routes that redirect to /dashboard when already authenticated
+const AUTH_ONLY = ['/login', '/register'];
 
 export const onRequest = defineMiddleware(async ({ cookies, url, redirect, locals }, next) => {
-  const token = cookies.get('access_token')?.value;
+  const token = cookies.get('access_token')?.value ?? null;
   const path  = url.pathname;
 
-  // Attach token to locals so Astro pages can use it without re-reading cookies
-  (locals as any).token = token ?? null;
+  // Make the token available to every SSR page without re-reading cookies
+  (locals as any).token = token;
 
-  const needsAuth = PROTECTED.some((p) => path.startsWith(p));
+  // /api/* routes handle their own auth — never intercept them here
+  if (path.startsWith('/api/')) return next();
+
+  const needsAuth  = PROTECTED.some((p) => path.startsWith(p));
   const isAuthPage = AUTH_ONLY.some((p) => path.startsWith(p));
 
   if (needsAuth && !token) {
+    // Preserve the intended destination so login can redirect back
     return redirect(`/login?next=${encodeURIComponent(path)}`);
   }
 

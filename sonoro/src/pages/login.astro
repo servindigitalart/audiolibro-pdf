@@ -2,6 +2,10 @@
 import BaseLayout from '@/layouts/BaseLayout.astro';
 import SonoroLogo from '@/components/ui/SonoroLogo.astro';
 import LoginForm from '@/components/auth/LoginForm';
+
+// Preserve the intended destination so the Google OAuth link can carry it
+// through the redirect dance and land the user back where they were going.
+const next = Astro.url.searchParams.get('next') ?? '';
 ---
 
 <BaseLayout
@@ -29,7 +33,7 @@ import LoginForm from '@/components/auth/LoginForm';
         <h1 class="text-[1.5rem] font-bold text-sonoro-900 tracking-tight mb-1">Welcome back</h1>
         <p class="text-sm text-sonoro-muted mb-8">Sign in to continue where you left off</p>
 
-        <LoginForm client:load />
+        <LoginForm googleNext={next} client:load />
 
         <p class="mt-7 text-center text-sm text-sonoro-muted">
           No account yet?{' '}

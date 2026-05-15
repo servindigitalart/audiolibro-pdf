@@ -192,6 +192,18 @@ class Settings(BaseSettings):
         default="http://localhost:3000/billing", description="Billing portal return URL"
     )
 
+    # OAuth — Google
+    google_client_id: str = Field(
+        default="", description="Google OAuth 2.0 client ID"
+    )
+    google_client_secret: str = Field(
+        default="", description="Google OAuth 2.0 client secret"
+    )
+    frontend_url: str = Field(
+        default="http://localhost:3000",
+        description="Frontend base URL — used to construct OAuth redirect URIs",
+    )
+
 
     @property
     def is_development(self) -> bool:
