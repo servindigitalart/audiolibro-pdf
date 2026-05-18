@@ -119,21 +119,33 @@ class Settings(BaseSettings):
         default=15, description="Metrics collection interval in seconds"
     )
 
-    # Document Storage (DigitalOcean Spaces / S3-compatible)
+    # Document Storage
+    # storage_backend: "s3" uses S3-compatible object storage (DO Spaces, Cloudflare R2, AWS S3).
+    #                  "local" writes to the local filesystem (development only — ephemeral on Railway).
+    storage_backend: str = Field(
+        default="local",
+        description="Storage backend: 'local' (dev) or 's3' (production)",
+    )
+    storage_local_path: str = Field(
+        default="/tmp/sonoro-storage",
+        description="Filesystem root for local storage backend (dev only)",
+    )
+
+    # S3-compatible object storage (DigitalOcean Spaces, Cloudflare R2, AWS S3)
     spaces_region: str = Field(
-        default="nyc3", description="DigitalOcean Spaces region"
+        default="auto", description="Storage region ('auto' for Cloudflare R2, 'nyc3' for DO Spaces)"
     )
     spaces_bucket: str = Field(
         default="sonoro-documents", description="Storage bucket name"
     )
     spaces_endpoint: str = Field(
-        default="", description="Custom S3-compatible endpoint (auto-generated if empty)"
+        default="", description="Full S3-compatible endpoint URL (required for non-AWS providers)"
     )
     spaces_access_key: str = Field(
-        default="", description="Spaces access key"
+        default="", description="S3 access key ID"
     )
     spaces_secret_key: str = Field(
-        default="", description="Spaces secret key"
+        default="", description="S3 secret access key"
     )
     max_upload_size_mb: int = Field(
         default=50, description="Maximum file upload size in megabytes"
