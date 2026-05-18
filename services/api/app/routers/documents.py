@@ -110,7 +110,7 @@ async def upload_document(
             f"Document upload initiated",
             extra={
                 'user_id': str(current_user.id),
-                'filename': file.filename,
+                'uploaded_filename': file.filename,
                 'plan_tier': current_user.plan_tier
             }
         )
@@ -170,7 +170,7 @@ async def upload_document(
             f"Document upload failed: {str(e)}",
             extra={
                 'user_id': str(current_user.id),
-                'filename': file.filename
+                'uploaded_filename': file.filename
             },
             exc_info=True
         )

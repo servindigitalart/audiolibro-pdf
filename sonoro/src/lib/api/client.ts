@@ -13,7 +13,11 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios';
 import Cookies from 'js-cookie';
 
-const BASE = (import.meta as any).env?.PUBLIC_API_URL ?? 'http://localhost:8000/api/v1';
+if (typeof window !== 'undefined' && !import.meta.env.PUBLIC_API_URL) {
+  console.error('[Sonoro] PUBLIC_API_URL is not set. Uploads and API calls will fail in production. Set this variable in your Vercel environment settings.');
+}
+
+const BASE = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:8000/api/v1';
 
 export const api = axios.create({
   baseURL: BASE,

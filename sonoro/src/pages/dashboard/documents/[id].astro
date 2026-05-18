@@ -1,5 +1,4 @@
 ---
-// All imports at the top — Astro's frontmatter compiler requires this
 import DashboardLayout from '@/layouts/DashboardLayout.astro';
 import AudioPlayer from '@/components/dashboard/AudioPlayer';
 import { fetchDocument } from '@/lib/api/server';
@@ -11,7 +10,6 @@ const { id } = Astro.params;
 
 if (!id) return Astro.redirect('/dashboard/documents');
 
-// Variable named 'doc' — never 'document' (shadows browser window.document global)
 let doc: Document | null = null;
 let chapters: Chapter[] = [];
 
@@ -21,65 +19,119 @@ try {
     fetchDocument(token, id),
     fetch(`${BASE}/documents/${id}/chapters`, {
       headers: { Authorization: `Bearer ${token}` },
-    }).then((r) => r.ok ? r.json() : []).catch(() => []),
+    }).then(r => r.ok ? r.json() : []).catch(() => []),
   ]);
 } catch {
   return Astro.redirect('/dashboard/documents');
 }
 
+const title    = doc?.title || doc?.filename || 'Document';
 const duration = doc?.metadata?.duration_seconds;
+const pages    = doc?.metadata?.pages;
+const chapLen  = chapters.length || doc?.metadata?.chapters;
 ---
 
-<DashboardLayout title={`${(doc?.title || doc?.filename) ?? 'Document'} – Sonoro`} activeNav="documents">
+<DashboardLayout title={`${title} – Sonoro`} activeNav="documents">
+
   <!-- Breadcrumb -->
-  <nav class="flex items-center gap-2 text-xs text-sonoro-muted mb-6" aria-label="Breadcrumb">
+  <nav class="flex items-center gap-1.5 text-xs text-sonoro-muted mb-6" aria-label="Breadcrumb">
     <a href="/dashboard" class="hover:text-sonoro-900 transition-colors">Dashboard</a>
-    <span aria-hidden="true">/</span>
+    <svg class="w-3 h-3 opacity-40" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+      <path d="M4.5 2l3 4-3 4" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
     <a href="/dashboard/documents" class="hover:text-sonoro-900 transition-colors">Library</a>
-    <span aria-hidden="true">/</span>
-    <span class="text-sonoro-700 truncate max-w-xs">{doc?.title || doc?.filename}</span>
+    <svg class="w-3 h-3 opacity-40" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+      <path d="M4.5 2l3 4-3 4" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <span class="text-sonoro-700 truncate max-w-[200px]">{title}</span>
   </nav>
 
-  <div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
-    <!-- Player — 3 cols -->
+  <div class="grid grid-cols-1 lg:grid-cols-5 gap-6 items-start">
+
+    <!-- Player — main column -->
     <div class="lg:col-span-3">
-      <AudioPlayer chapters={chapters} documentTitle={(doc?.title || doc?.filename) ?? ''} client:load />
+      <AudioPlayer
+        chapters={chapters}
+        documentTitle={title}
+        client:load
+      />
     </div>
 
-    <!-- Metadata — 2 cols -->
+    <!-- Metadata sidebar -->
     <div class="lg:col-span-2 space-y-4">
+
+      <!-- Document info card -->
       <div class="card-base p-5">
-        <h2 class="text-sm font-semibold text-sonoro-900 mb-4">Document info</h2>
+        <h2 class="text-xs font-semibold text-sonoro-500 uppercase tracking-wider mb-4">Document info</h2>
         <dl class="space-y-3">
           {[
-            { label: 'Filename',  value: doc?.filename ?? '—' },
-            { label: 'File size', value: doc ? fmtFileSize(doc.file_size) : '—' },
-            { label: 'Pages',     value: doc?.metadata?.pages ?? '—' },
-            { label: 'Chapters',  value: (chapters.length || doc?.metadata?.chapters) ?? '—' },
+            { label: 'File',      value: doc?.filename ?? '—' },
+            { label: 'Size',      value: doc ? fmtFileSize(doc.file_size) : '—' },
+            { label: 'Pages',     value: pages ?? '—' },
+            { label: 'Chapters',  value: chapLen ?? '—' },
             { label: 'Duration',  value: duration ? fmtDuration(duration) : '—' },
             { label: 'Uploaded',  value: doc ? fmtDate(doc.upload_date) : '—' },
           ].map(({ label, value }) => (
-            <div class="flex justify-between gap-4">
+            <div class="flex justify-between gap-4 items-baseline">
               <dt class="text-xs text-sonoro-muted shrink-0">{label}</dt>
-              <dd class="text-xs font-medium text-sonoro-800 text-right truncate">{value}</dd>
+              <dd class="text-xs font-medium text-sonoro-800 text-right truncate max-w-[160px]">{value}</dd>
             </div>
           ))}
         </dl>
       </div>
 
-      <!-- Download -->
+      <!-- Status indicator -->
+      {doc && doc.status !== 'completed' && (
+        <div class={`card-base p-4 flex items-start gap-3 ${doc.status === 'failed' ? 'border-red-200' : 'border-amber-200/70'}`}>
+          <div class={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full mt-0.5 ${doc.status === 'failed' ? 'bg-red-50' : 'bg-amber-50'}`}>
+            {doc.status === 'failed' ? (
+              <svg class="w-3.5 h-3.5 text-red-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                <path fill-rule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0zm-8-5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5A.75.75 0 0 1 10 5zm0 10a1 1 0 1 0 0-2 1 1 0 0 0 0 2z" clip-rule="evenodd"/>
+              </svg>
+            ) : (
+              <svg class="w-3.5 h-3.5 text-amber-500 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" stroke-opacity=".2"/>
+                <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+              </svg>
+            )}
+          </div>
+          <div>
+            <p class="text-xs font-semibold text-sonoro-900 mb-0.5">
+              {doc.status === 'failed' ? 'Processing failed' : 'Processing…'}
+            </p>
+            <p class="text-xs text-sonoro-muted leading-relaxed">
+              {doc.status === 'failed'
+                ? (doc.error_message ?? 'Something went wrong. Try uploading again.')
+                : 'Your audiobook is being generated. Refresh in a moment.'}
+            </p>
+          </div>
+        </div>
+      )}
+
+      <!-- Download button -->
       {doc?.status === 'completed' && doc?.audiobook_url && (
         <a
           href={doc.audiobook_url}
           download
-          class="btn-outline w-full justify-center btn-lg"
+          class="btn-outline w-full justify-center gap-2.5"
         >
           <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-            <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"/>
+            <path fill-rule="evenodd" d="M3 17a1 1 0 0 1 1-1h12a1 1 0 1 1 0 2H4a1 1 0 0 1-1-1zm3.293-7.707a1 1 0 0 1 1.414 0L9 10.586V3a1 1 0 1 1 2 0v7.586l1.293-1.293a1 1 0 1 1 1.414 1.414l-3 3a1 1 0 0 1-1.414 0l-3-3a1 1 0 0 1 0-1.414z" clip-rule="evenodd"/>
           </svg>
-          Download MP3
+          Download audiobook
         </a>
       )}
+
+      <!-- Back link -->
+      <a
+        href="/dashboard/documents"
+        class="flex items-center gap-2 text-xs text-sonoro-muted hover:text-sonoro-900 transition-colors"
+      >
+        <svg class="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M10 3L5 8l5 5"/>
+        </svg>
+        Back to library
+      </a>
     </div>
   </div>
 </DashboardLayout>

@@ -12,9 +12,9 @@ const [documents, overview] = await Promise.all([
 
 const user       = overview?.user;
 const usage      = overview?.usage;
-const completed  = documents.filter((d) => d.status === 'completed').length;
-const processing = documents.filter((d) => d.status === 'processing' || d.status === 'pending').length;
-const charPct    = usage ? Math.round((usage.chars_used / usage.chars_limit) * 100) : 0;
+const completed  = documents.filter(d => d.status === 'completed').length;
+const processing = documents.filter(d => d.status === 'processing' || d.status === 'pending').length;
+const charPct    = usage ? Math.min(Math.round((usage.chars_used / usage.chars_limit) * 100), 100) : 0;
 
 const hour     = new Date().getHours();
 const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
@@ -24,30 +24,35 @@ const name     = user?.email?.split('@')[0] ?? null;
 <DashboardLayout title="Dashboard – Sonoro" activeNav="dashboard">
 
   <!-- Page header -->
-  <div class="mb-8">
+  <div class="mb-8 animate-fade-in">
     <h1 class="text-[1.375rem] font-bold text-sonoro-900 tracking-tight">
       {greeting}{name ? `, ${name}` : ''}.
     </h1>
-    <p class="text-sm text-sonoro-muted mt-1">Here's your library at a glance.</p>
+    <p class="text-sm text-sonoro-muted mt-1">
+      {documents.length === 0
+        ? 'Ready to turn your first PDF into an audiobook?'
+        : documents.length === 1
+        ? 'Your library is growing.'
+        : `${completed} audiobook${completed !== 1 ? 's' : ''} ready to listen.`}
+    </p>
   </div>
 
-  <!-- Stats grid -->
+  <!-- Stats grid — staggered fade in -->
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-    <!-- Total audiobooks -->
-    <div class="card-base p-5 group">
+
+    <div class="card-base p-5 animate-fade-in" style="animation-delay:60ms;animation-fill-mode:both">
       <div class="flex items-center justify-between mb-3">
-        <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-sonoro-surface border border-sonoro-border text-sonoro-600">
+        <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-sonoro-surface border border-sonoro-border text-sonoro-500">
           <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
             <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clip-rule="evenodd"/>
           </svg>
         </div>
       </div>
       <p class="text-2xl font-bold tabular text-sonoro-900 tracking-tight">{documents.length}</p>
-      <p class="text-xs text-sonoro-muted mt-0.5">Total audiobooks</p>
+      <p class="text-xs text-sonoro-muted mt-0.5">Total uploaded</p>
     </div>
 
-    <!-- Ready to play -->
-    <div class="card-base p-5">
+    <div class="card-base p-5 animate-fade-in" style="animation-delay:120ms;animation-fill-mode:both">
       <div class="flex items-center justify-between mb-3">
         <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 border border-emerald-100 text-emerald-600">
           <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -56,17 +61,14 @@ const name     = user?.email?.split('@')[0] ?? null;
         </div>
       </div>
       <p class="text-2xl font-bold tabular text-sonoro-900 tracking-tight">{completed}</p>
-      <p class="text-xs text-sonoro-muted mt-0.5">Ready to play</p>
+      <p class="text-xs text-sonoro-muted mt-0.5">Ready to listen</p>
     </div>
 
-    <!-- Processing -->
-    <div class="card-base p-5">
+    <div class="card-base p-5 animate-fade-in" style="animation-delay:180ms;animation-fill-mode:both">
       <div class="flex items-center justify-between mb-3">
         <div class:list={[
           'flex h-8 w-8 items-center justify-center rounded-lg border',
-          processing > 0
-            ? 'bg-amber-50 border-amber-100 text-amber-600'
-            : 'bg-sonoro-surface border-sonoro-border text-sonoro-400',
+          processing > 0 ? 'bg-amber-50 border-amber-100 text-amber-600' : 'bg-sonoro-surface border-sonoro-border text-sonoro-400',
         ]}>
           <svg class:list={['w-4 h-4', processing > 0 && 'animate-spin-slow']} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
             <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>
@@ -77,14 +79,14 @@ const name     = user?.email?.split('@')[0] ?? null;
       <p class="text-xs text-sonoro-muted mt-0.5">Processing now</p>
     </div>
 
-    <!-- Quota -->
-    <div class:list={['card-base p-5', charPct >= 80 ? 'border-amber-200 bg-amber-50/60' : '']}>
+    <div
+      class:list={['card-base p-5 animate-fade-in', charPct >= 80 ? 'border-amber-200/80 bg-amber-50/40' : '']}
+      style="animation-delay:240ms;animation-fill-mode:both"
+    >
       <div class="flex items-center justify-between mb-3">
         <div class:list={[
           'flex h-8 w-8 items-center justify-center rounded-lg border',
-          charPct >= 80
-            ? 'bg-amber-50 border-amber-200 text-amber-600'
-            : 'bg-sonoro-surface border-sonoro-border text-sonoro-500',
+          charPct >= 80 ? 'bg-amber-50 border-amber-200 text-amber-600' : 'bg-sonoro-surface border-sonoro-border text-sonoro-500',
         ]}>
           <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
             <path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z"/>
@@ -98,56 +100,74 @@ const name     = user?.email?.split('@')[0] ?? null;
     </div>
   </div>
 
-  <!-- Quota warning banner -->
+  <!-- Quota warning -->
   {charPct >= 80 && (
-    <div class="mb-6 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 flex items-center justify-between gap-4">
-      <div>
-        <p class="text-sm font-semibold text-amber-800">You're at {charPct}% of your character quota</p>
-        <p class="text-xs text-amber-700 mt-0.5">Upgrade now to keep converting PDFs without interruption.</p>
+    <div class="mb-6 rounded-2xl border border-amber-200 bg-amber-50/80 px-5 py-4 flex items-center justify-between gap-4 animate-slide-down">
+      <div class="flex items-start gap-3">
+        <svg class="w-4 h-4 text-amber-600 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+          <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/>
+        </svg>
+        <div>
+          <p class="text-sm font-semibold text-amber-800">You're at {charPct}% of your monthly quota</p>
+          <p class="text-xs text-amber-700 mt-0.5">Upgrade to keep converting without interruption.</p>
+        </div>
       </div>
-      <a href="/dashboard/billing" class="btn-accent btn-sm shrink-0">Upgrade plan</a>
+      <a href="/dashboard/billing" class="btn-accent btn-sm shrink-0">Upgrade →</a>
     </div>
   )}
 
-  <!-- Empty state — first-time user -->
+  <!-- Empty state -->
   {documents.length === 0 && (
-    <div class="card-base overflow-hidden">
-      <div class="px-8 py-14 text-center relative">
-        <!-- Background glow -->
-        <div
-          class="absolute inset-x-0 top-0 h-32 pointer-events-none"
-          style="background: linear-gradient(180deg, rgba(254,243,199,0.5) 0%, transparent 100%);"
-          aria-hidden="true"
-        ></div>
+    <div class="card-base overflow-hidden animate-scale-in" style="animation-delay:200ms;animation-fill-mode:both">
+      <!-- Ambient gradient header -->
+      <div
+        class="h-48 relative overflow-hidden flex items-center justify-center"
+        style="background: linear-gradient(135deg, #FDFCFB 0%, #FEF3C7 50%, #FFF9EB 100%);"
+      >
+        <!-- Decorative orbs -->
+        <div class="absolute top-[-20%] right-[-5%] w-48 h-48 rounded-full" style="background:radial-gradient(ellipse,rgba(245,158,11,0.18) 0%,transparent 70%)" aria-hidden="true"></div>
+        <div class="absolute bottom-[-10%] left-[-5%] w-36 h-36 rounded-full" style="background:radial-gradient(ellipse,rgba(245,158,11,0.10) 0%,transparent 70%)" aria-hidden="true"></div>
 
-        <div class="relative">
-          <!-- Waveform icon -->
-          <div class="flex items-end justify-center gap-1 h-10 mb-6" aria-hidden="true">
-            {[35, 65, 90, 55, 80, 45, 70, 40, 75, 60].map((h, i) => (
-              <div class="waveform-bar w-1.5" style={`height:${h}%;animation-delay:${i*0.12}s`}></div>
+        <!-- Waveform visual -->
+        <div class="relative flex flex-col items-center">
+          <div class="flex items-end justify-center gap-1 h-12 mb-0" aria-hidden="true">
+            {[30, 55, 85, 65, 45, 90, 50, 72, 38, 80, 60, 42].map((h, i) => (
+              <div class="waveform-bar w-1.5" style={`height:${h}%;animation-delay:${i*0.10}s`} />
             ))}
           </div>
-
-          <h2 class="text-xl font-bold text-sonoro-900 tracking-tight mb-2">
-            Your audiobooks will appear here
-          </h2>
-          <p class="text-sm text-sonoro-muted mb-8 max-w-sm mx-auto leading-relaxed">
-            Upload your first PDF and it'll be converted to studio-quality audio in under 60&nbsp;seconds.
-          </p>
-          <a href="/dashboard/upload" class="btn-accent btn-lg inline-flex">
-            Upload your first PDF
-            <svg class="w-4 h-4" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </a>
         </div>
+      </div>
+
+      <div class="px-8 py-8 text-center">
+        <h2 class="text-xl font-bold text-sonoro-900 tracking-tight mb-2">
+          Your audiobooks will appear here
+        </h2>
+        <p class="text-sm text-sonoro-600 mb-6 max-w-md mx-auto leading-relaxed">
+          Upload any PDF — research paper, textbook, report, or book — and Sonoro converts it to studio-quality audio in under 60 seconds.
+        </p>
+
+        <!-- Use case chips -->
+        <div class="flex flex-wrap items-center justify-center gap-2 mb-8">
+          {['Research papers', 'Textbooks', 'Business reports', 'Industry news', 'Books'].map(label => (
+            <span class="inline-flex items-center text-xs text-sonoro-600 bg-sonoro-surface border border-sonoro-border px-3 py-1 rounded-full">
+              {label}
+            </span>
+          ))}
+        </div>
+
+        <a href="/dashboard/upload" class="btn-accent btn-lg inline-flex gap-2">
+          Upload your first PDF
+          <svg class="w-4 h-4" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </a>
       </div>
     </div>
   )}
 
   <!-- Document library -->
   {documents.length > 0 && (
-    <div>
+    <div class="animate-fade-in" style="animation-delay:300ms;animation-fill-mode:both">
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-sm font-semibold text-sonoro-900">Recent audiobooks</h2>
         {documents.length > 5 && (
@@ -157,6 +177,17 @@ const name     = user?.email?.split('@')[0] ?? null;
         )}
       </div>
       <DocumentList initialDocuments={documents.slice(0, 5)} client:load />
+
+      <!-- Upload nudge when library has few items -->
+      {documents.length < 4 && (
+        <div class="mt-4 flex items-center justify-between rounded-2xl border border-dashed border-sonoro-border bg-sonoro-surface/60 px-5 py-4">
+          <div>
+            <p class="text-sm font-medium text-sonoro-700">Add more to your library</p>
+            <p class="text-xs text-sonoro-muted mt-0.5">Any PDF becomes an audiobook in seconds.</p>
+          </div>
+          <a href="/dashboard/upload" class="btn-outline btn-sm shrink-0">Upload PDF →</a>
+        </div>
+      )}
     </div>
   )}
 

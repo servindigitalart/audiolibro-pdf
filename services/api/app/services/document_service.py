@@ -180,7 +180,7 @@ class DocumentService:
                 extra={
                     'user_id': str(user.id),
                     'document_id': str(document_id),
-                    'filename': file.filename
+                    'uploaded_filename': file.filename
                 }
             )
             
@@ -294,7 +294,7 @@ class DocumentService:
                 f"Document upload failed: {str(e)}",
                 extra={
                     'user_id': str(user.id),
-                    'filename': file.filename
+                    'uploaded_filename': file.filename
                 },
                 exc_info=True
             )

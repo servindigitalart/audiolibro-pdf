@@ -104,7 +104,26 @@ def setup_logging() -> None:
     )
 
 
+# Python's LogRecord reserves these attribute names.
+# Passing any of them inside extra={} raises KeyError at runtime.
+# Use safe_extra() below when building extra= dicts for stdlib logger calls.
+_RESERVED_LOG_KEYS = frozenset({
+    "args", "created", "exc_info", "exc_text", "filename", "funcName",
+    "levelname", "levelno", "lineno", "message", "module", "msecs", "msg",
+    "name", "pathname", "process", "processName", "relativeCreated",
+    "stack_info", "thread", "threadName",
+})
+
 _STDLIB_LOG_KWARGS = frozenset({"exc_info", "stack_info", "stacklevel"})
+
+
+def safe_extra(d: dict) -> dict:
+    """
+    Sanitize an extra= dict for stdlib logger calls.
+    Any key that collides with a reserved LogRecord attribute is prefixed with
+    'log_' to prevent KeyError: "Attempt to overwrite '...' in LogRecord".
+    """
+    return {(f"log_{k}" if k in _RESERVED_LOG_KEYS else k): v for k, v in d.items()}
 
 
 class BoundLogger:

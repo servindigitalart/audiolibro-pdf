@@ -222,6 +222,63 @@
   /* Tabular numbers for stats */
   .tabular { font-variant-numeric: tabular-nums; }
 
+  /* Page-level fade — applied to main content areas */
+  .page-enter {
+    animation: fadeIn 0.4s cubic-bezier(0.25,0.46,0.45,0.94) both;
+  }
+
+  /* Stagger helpers — combine with animate-fade-in */
+  .delay-0   { animation-delay:   0ms; }
+  .delay-60  { animation-delay:  60ms; }
+  .delay-120 { animation-delay: 120ms; }
+  .delay-180 { animation-delay: 180ms; }
+  .delay-240 { animation-delay: 240ms; }
+  .delay-300 { animation-delay: 300ms; }
+  .delay-400 { animation-delay: 400ms; }
+
+  /* Hover lift — adds to any card */
+  .hover-lift {
+    @apply transition-all duration-200 ease-smooth;
+  }
+  .hover-lift:hover {
+    @apply -translate-y-0.5 shadow-hover;
+  }
+
+  /* Volume slider — cross-browser amber track fill */
+  .player-volume-slider::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 999px;
+  }
+  .player-volume-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #F59E0B;
+    border: 2px solid white;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+    margin-top: -4px;
+    cursor: pointer;
+  }
+  .player-volume-slider::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #F59E0B;
+    border: 2px solid white;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+    cursor: pointer;
+  }
+  .player-volume-slider::-moz-range-track {
+    height: 4px;
+    border-radius: 999px;
+    background: #E8E7E3;
+  }
+  .player-volume-slider {
+    @apply outline-none focus-visible:ring-2 focus-visible:ring-sonoro-amber/40;
+  }
+
   /* Divider with text */
   .divider-text {
     @apply relative flex items-center;

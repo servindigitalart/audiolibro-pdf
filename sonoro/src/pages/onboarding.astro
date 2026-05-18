@@ -8,110 +8,290 @@ const token   = (Astro.locals as any).token as string;
 const overview = await fetchAccountOverview(token).catch(() => null);
 if (!overview) return Astro.redirect('/login');
 
-const step = parseInt(Astro.url.searchParams.get('step') ?? '1');
-const clampedStep = Math.min(Math.max(step, 1), 3);
+const step    = Math.min(Math.max(parseInt(Astro.url.searchParams.get('step') ?? '1'), 1), 3);
+const persona = Astro.url.searchParams.get('persona') ?? '';
+const name    = overview.user.email.split('@')[0];
+
+const PERSONAS = {
+  student: {
+    icon: `<svg viewBox="0 0 20 20" fill="currentColor" class="w-5 h-5"><path d="M10.394 2.08a1 1 0 0 0-.788 0l-7 3a1 1 0 0 0 0 1.84L5.25 8.051a.999.999 0 0 1 .356-.257l4-1.714a1 1 0 1 1 .788 1.838l-2.727 1.17 1.94.831a1 1 0 0 0 .787 0l7-3a1 1 0 0 0 0-1.838l-7-3ZM3.31 9.397 5 10.12v4.102a8.969 8.969 0 0 0-1.05-.174 1 1 0 0 1-.89-.89 11.115 11.115 0 0 1 .25-3.762Zm5.99 7.176A9.026 9.026 0 0 0 7 14.935v-3.957l1.818.78a3 3 0 0 0 2.364 0l5.508-2.361a11.026 11.026 0 0 1 .25 3.762 1 1 0 0 1-.89.89 8.968 8.968 0 0 0-5.35 2.524 1 1 0 0 1-1.4 0ZM6 18a1 1 0 0 0 1-1v-2.065a8.935 8.935 0 0 0-2-.712V17a1 1 0 0 0 1 1Z"/></svg>`,
+    label: 'Student',
+    desc: 'Papers, textbooks, study guides',
+    tagline: 'Study smarter, not harder',
+    uploadPrompt: 'Drop your first paper, textbook, or study guide — any PDF works.',
+    uploadHint: 'Academic PDFs, research papers, lecture notes',
+    tips: [
+      { t: 'Listen at 1.5× to get through material 50% faster without losing comprehension.' },
+      { t: 'Chapter detection lets you jump to the exact section you need before an exam.' },
+      { t: 'Download the MP3 and listen during your commute or workout.' },
+      { t: 'Combine visual reading with audio playback for better retention.' },
+    ],
+  },
+  founder: {
+    icon: `<svg viewBox="0 0 20 20" fill="currentColor" class="w-5 h-5"><path fill-rule="evenodd" d="M12 1.586l-4 4v12.828l4-4V1.586zM3.707 3.293A1 1 0 0 0 2 4v10a1 1 0 0 0 .293.707L6 18.414V5.586L3.707 3.293zm10.586 0L12 5.586v12.828l2.293 2.293A1 1 0 0 0 16 20V10a1 1 0 0 0-.293-.707l-2-2V3.293z" clip-rule="evenodd"/></svg>`,
+    label: 'Founder',
+    desc: 'Reports, pitch decks, research',
+    tagline: 'Stay ahead without slowing down',
+    uploadPrompt: 'Turn your first report, deck, or industry document into audio.',
+    uploadHint: 'Board reports, market research, investor docs',
+    tips: [
+      { t: 'Listen to investor updates and board reports during your commute.' },
+      { t: 'Use 2× speed to consume competitor analysis in half the time.' },
+      { t: 'Offline MP3 download means you can listen on any flight or drive.' },
+      { t: 'Batch upload multiple documents and build a listening queue.' },
+    ],
+  },
+  researcher: {
+    icon: `<svg viewBox="0 0 20 20" fill="currentColor" class="w-5 h-5"><path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11ZM2 9a7 7 0 1 1 12.452 4.391l3.328 3.329a.75.75 0 1 1-1.06 1.06l-3.329-3.328A7 7 0 0 1 2 9Z" clip-rule="evenodd"/></svg>`,
+    label: 'Researcher',
+    desc: 'Papers, journals, literature',
+    tagline: 'Deep work, without the eye strain',
+    uploadPrompt: 'Convert your first paper, journal article, or literature review.',
+    uploadHint: 'Academic papers, preprints, technical reports',
+    tips: [
+      { t: 'Listen at 1× for dense technical content — comprehension over speed.' },
+      { t: 'Chapters match paper sections: abstract, method, results, discussion.' },
+      { t: 'Pair audio with note-taking for better synthesis and retention.' },
+      { t: 'Build a listening library of related papers in one go.' },
+    ],
+  },
+  creator: {
+    icon: `<svg viewBox="0 0 20 20" fill="currentColor" class="w-5 h-5"><path d="m9.653 16.915-.005-.003-.019-.01a20.759 20.759 0 0 1-1.162-.682 22.045 22.045 0 0 1-2.582-2.184C4.045 12.733 2 10.352 2 7.5a4.5 4.5 0 0 1 8-2.828A4.5 4.5 0 0 1 18 7.5c0 2.852-2.044 5.233-3.885 6.936a22.049 22.049 0 0 1-3.744 2.866l-.019.01-.005.003h-.002a.739.739 0 0 1-.69.001l-.002-.001Z"/></svg>`,
+    label: 'Creator',
+    desc: 'Inspiration, reference, research',
+    tagline: 'Absorb knowledge while you create',
+    uploadPrompt: 'Turn your reference material, style guides, or research into audio.',
+    uploadHint: 'Books, articles, style guides, reference material',
+    tips: [
+      { t: 'Listen to research and inspiration during creative work or walks.' },
+      { t: 'Use chapter navigation to revisit specific sections of your source material.' },
+      { t: 'Convert long-form articles and PDFs into a personal audio library.' },
+      { t: 'Download for offline listening anywhere inspiration strikes.' },
+    ],
+  },
+  accessibility: {
+    icon: `<svg viewBox="0 0 20 20" fill="currentColor" class="w-5 h-5"><path fill-rule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm.75-11.25a.75.75 0 0 0-1.5 0v2.5h-2.5a.75.75 0 0 0 0 1.5h2.5v2.5a.75.75 0 0 0 1.5 0v-2.5h2.5a.75.75 0 0 0 0-1.5h-2.5v-2.5Z" clip-rule="evenodd"/></svg>`,
+    label: 'Accessibility',
+    desc: 'Any document, natural audio',
+    tagline: 'Every document, within reach',
+    uploadPrompt: 'Drop any PDF — Sonoro converts it to clear, natural audio instantly.',
+    uploadHint: 'Any document — books, letters, contracts, forms',
+    tips: [
+      { t: 'Natural-sounding voice makes long documents easy to follow.' },
+      { t: 'Speed controls let you set exactly the pace that works for you.' },
+      { t: 'Download MP3 files for use with your preferred audio device or player.' },
+      { t: 'Works with any PDF — scanned documents, forms, letters, books.' },
+    ],
+  },
+  language: {
+    icon: `<svg viewBox="0 0 20 20" fill="currentColor" class="w-5 h-5"><path fill-rule="evenodd" d="M7.172 2.172a4 4 0 0 1 5.656 0l5 5a4 4 0 0 1 0 5.656l-5 5a4 4 0 0 1-5.656 0l-5-5a4 4 0 0 1 0-5.656l5-5Zm4.596 1.06L9.232 5.768 6.818 3.354a2.5 2.5 0 0 0-3.464 3.464l2.414 2.414L3.232 11.67a2.5 2.5 0 0 0 3.464 3.464l2.414-2.414 2.536 2.536a2.5 2.5 0 0 0 3.464-3.464l-2.414-2.414 2.414-2.414a2.5 2.5 0 0 0-3.464-3.464l-2.414 2.414L11.768 3.232Z" clip-rule="evenodd"/></svg>`,
+    label: 'Language Learner',
+    desc: 'Books and content in any language',
+    tagline: 'Immerse yourself in the language',
+    uploadPrompt: 'Upload your first document in the language you\'re learning.',
+    uploadHint: 'Books, articles, study material in any language',
+    tips: [
+      { t: 'Listen at 0.75× speed for clearer pronunciation and comprehension.' },
+      { t: 'Chapter navigation helps you replay challenging sections.' },
+      { t: 'Alternate between reading along and audio-only for optimal immersion.' },
+      { t: 'Download MP3s for spaced repetition listening throughout the day.' },
+    ],
+  },
+} as const;
+
+type PersonaKey = keyof typeof PERSONAS;
+
+const currentPersona = persona && persona in PERSONAS
+  ? PERSONAS[persona as PersonaKey]
+  : null;
+
+const PERSONA_KEYS = Object.keys(PERSONAS) as PersonaKey[];
 ---
 
 <BaseLayout title="Get started – Sonoro" noIndex={true}>
   <div class="min-h-screen bg-sonoro-surface flex flex-col">
 
-    <!-- Progress bar -->
-    <div class="h-1 bg-sonoro-border">
+    <!-- Top progress bar -->
+    <div class="h-0.5 bg-sonoro-border" role="presentation">
       <div
-        class="h-full bg-sonoro-amber transition-all duration-500 ease-out"
-        style={`width: ${(clampedStep / 3) * 100}%`}
+        class="h-full bg-sonoro-amber transition-all duration-700 ease-out"
+        style={`width:${(step / 3) * 100}%`}
         role="progressbar"
-        aria-valuenow={clampedStep}
+        aria-valuenow={step}
         aria-valuemin={1}
         aria-valuemax={3}
-      ></div>
+        aria-label={`Step ${step} of 3`}
+      />
     </div>
 
     <!-- Header -->
-    <header class="flex items-center justify-between px-8 py-5">
-      <a href="/" class="flex items-center gap-2.5">
-        <SonoroLogo class="h-7 w-7" />
-        <span class="text-lg font-bold text-sonoro-900">Sonoro</span>
+    <header class="flex items-center justify-between px-6 sm:px-10 py-5 shrink-0">
+      <a href="/" class="flex items-center gap-2.5 group" aria-label="Sonoro home">
+        <SonoroLogo class="h-6 w-6" />
+        <span class="text-[1.0625rem] font-bold tracking-tight text-sonoro-900 group-hover:text-sonoro-amber transition-colors">Sonoro</span>
       </a>
-      <div class="flex items-center gap-3">
-        <span class="text-xs text-sonoro-muted">Step {clampedStep} of 3</span>
-        <a href="/dashboard" class="btn-ghost btn-sm text-xs">Skip →</a>
+      <div class="flex items-center gap-4">
+        <span class="text-xs text-sonoro-400 hidden sm:block">Step {step} of 3</span>
+        <a href="/dashboard" class="text-xs text-sonoro-muted hover:text-sonoro-900 transition-colors">
+          Skip setup →
+        </a>
       </div>
     </header>
 
-    <!-- Content -->
-    <main class="flex flex-1 flex-col items-center justify-center px-6 py-12">
-      <div class="w-full max-w-xl">
+    <!-- Main content -->
+    <main class="flex flex-1 flex-col items-center justify-center px-6 py-10 sm:py-16">
+      <div class="w-full max-w-2xl">
 
-        {clampedStep === 1 && (
-          <div class="text-center animate-fade-in">
-            <div class="flex items-end justify-center gap-1.5 h-14 mb-6">
-              {[40, 70, 100, 80, 55, 90, 65].map((h, i) => (
-                <div class="waveform-bar w-2" style={`height: ${h}%; animation-delay: ${i * 0.12}s;`}></div>
+        <!-- ── Step 1: Persona selection ── -->
+        {step === 1 && (
+          <div class="animate-fade-in">
+            <!-- Waveform visual -->
+            <div class="flex items-end justify-center gap-1 h-10 mb-8" aria-hidden="true">
+              {[38, 65, 90, 72, 50, 84, 58, 78, 44].map((h, i) => (
+                <div class="waveform-bar w-1.5" style={`height:${h}%;animation-delay:${i*0.11}s`} />
               ))}
             </div>
-            <h1 class="text-2xl font-bold text-sonoro-900 mb-2">
-              Welcome to Sonoro, {overview.user.email.split('@')[0]} 👋
-            </h1>
-            <p class="text-sm text-sonoro-600 mb-8 max-w-sm mx-auto">
-              You're 60 seconds away from listening to your first audiobook. Let's go.
-            </p>
-            <a
-              href="/onboarding?step=2"
-              class="btn-accent btn-lg inline-flex"
-            >
-              Get started →
-            </a>
-          </div>
-        )}
 
-        {clampedStep === 2 && (
-          <div class="animate-slide-up">
-            <div class="text-center mb-8">
-              <span class="label-sm text-sonoro-amber-dark block mb-3">Step 2 of 3</span>
-              <h1 class="text-2xl font-bold text-sonoro-900 mb-2">Upload your first PDF</h1>
-              <p class="text-sm text-sonoro-600">
-                Any PDF works — textbook, report, paper, or novel.
+            <div class="text-center mb-10">
+              <h1 class="text-2xl sm:text-3xl font-bold text-sonoro-900 tracking-tight mb-3">
+                Welcome, {name}.
+              </h1>
+              <p class="text-sm text-sonoro-600 max-w-sm mx-auto leading-relaxed">
+                Tell us how you'll use Sonoro — we'll set things up to match.
               </p>
             </div>
-            <UploadZone client:load />
-            <p class="text-center mt-4 text-xs text-sonoro-muted">
-              You can skip this and{' '}
-              <a href="/onboarding?step=3" class="underline hover:text-sonoro-900 transition-colors">upload later →</a>
+
+            <!-- Persona grid -->
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-8">
+              {PERSONA_KEYS.map((key) => {
+                const p = PERSONAS[key];
+                return (
+                  <a
+                    href={`/onboarding?step=2&persona=${key}`}
+                    class="group relative flex flex-col gap-2.5 rounded-2xl border border-sonoro-border bg-sonoro-white p-4 sm:p-5 hover:border-sonoro-amber/60 hover:shadow-hover hover:-translate-y-0.5 transition-all duration-200 cursor-pointer text-left"
+                  >
+                    <!-- Icon -->
+                    <div class="flex h-9 w-9 items-center justify-center rounded-xl bg-sonoro-surface border border-sonoro-border text-sonoro-600 group-hover:bg-sonoro-amber-light group-hover:border-sonoro-amber/30 group-hover:text-sonoro-amber-dark transition-all duration-200">
+                      <Fragment set:html={p.icon} />
+                    </div>
+                    <!-- Label -->
+                    <div>
+                      <p class="text-sm font-semibold text-sonoro-900 group-hover:text-sonoro-900 mb-0.5">{p.label}</p>
+                      <p class="text-xs text-sonoro-muted leading-snug">{p.desc}</p>
+                    </div>
+                    <!-- Hover arrow -->
+                    <svg
+                      class="absolute right-4 top-4 w-3.5 h-3.5 text-sonoro-300 opacity-0 group-hover:opacity-100 group-hover:text-sonoro-amber transition-all duration-150 translate-x-0 group-hover:translate-x-0.5"
+                      viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M3 7h8M7 3l4 4-4 4"/>
+                    </svg>
+                  </a>
+                );
+              })}
+            </div>
+
+            <p class="text-center text-xs text-sonoro-400">
+              Not sure?{' '}
+              <a href="/onboarding?step=2" class="text-sonoro-amber-dark hover:text-sonoro-amber underline underline-offset-2 transition-colors">
+                Continue without selecting →
+              </a>
             </p>
           </div>
         )}
 
-        {clampedStep === 3 && (
-          <div class="text-center animate-fade-in">
-            <div class="flex h-20 w-20 items-center justify-center rounded-3xl bg-green-50 border border-green-100 mx-auto mb-6">
-              <svg class="w-10 h-10 text-green-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-                <path d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-            </div>
-            <h1 class="text-2xl font-bold text-sonoro-900 mb-2">You're all set!</h1>
-            <p class="text-sm text-sonoro-600 mb-8 max-w-sm mx-auto">
-              Your account is ready. Head to your dashboard to manage your audiobooks.
-            </p>
-            <div class="flex flex-col sm:flex-row gap-3 justify-center">
-              <a href="/dashboard" class="btn-accent btn-lg">Go to dashboard →</a>
-              <a href="/dashboard/upload" class="btn-outline btn-lg">Upload another PDF</a>
+        <!-- ── Step 2: Upload ── -->
+        {step === 2 && (
+          <div class="animate-slide-up">
+            <div class="text-center mb-8">
+              {currentPersona ? (
+                <>
+                  <span class="inline-flex items-center gap-1.5 text-xs font-semibold text-sonoro-amber-dark bg-sonoro-amber-light px-3 py-1 rounded-full mb-4">
+                    <Fragment set:html={currentPersona.icon} />
+                    {currentPersona.tagline}
+                  </span>
+                  <h1 class="text-2xl font-bold text-sonoro-900 tracking-tight mb-2">
+                    {currentPersona.uploadPrompt}
+                  </h1>
+                  <p class="text-sm text-sonoro-muted">{currentPersona.uploadHint}</p>
+                </>
+              ) : (
+                <>
+                  <span class="label-sm text-sonoro-amber-dark block mb-3">Step 2 of 3</span>
+                  <h1 class="text-2xl font-bold text-sonoro-900 tracking-tight mb-2">Upload your first PDF</h1>
+                  <p class="text-sm text-sonoro-muted">Any PDF works — textbook, report, paper, or novel.</p>
+                </>
+              )}
             </div>
 
-            <!-- Quick tips -->
-            <div class="mt-10 text-left rounded-2xl border border-sonoro-border bg-sonoro-white p-5 space-y-3">
-              <p class="text-xs font-semibold text-sonoro-900 mb-3">Pro tips to get more out of Sonoro</p>
-              {[
-                { icon: '⚡', tip: 'Use 1.5× speed to get through material 50% faster.' },
-                { icon: '📋', tip: 'Chapter detection means you can skip straight to what matters.' },
-                { icon: '📥', tip: 'Download the MP3 for offline listening on commutes.' },
-                { icon: '🔔', tip: "We'll email you when your conversion is ready." },
-              ].map(({ icon, tip }) => (
-                <div class="flex items-start gap-3">
-                  <span class="text-base shrink-0">{icon}</span>
-                  <p class="text-xs text-sonoro-600 leading-relaxed">{tip}</p>
-                </div>
-              ))}
+            <UploadZone client:load />
+
+            <p class="text-center mt-5 text-xs text-sonoro-muted">
+              Want to explore first?{' '}
+              <a
+                href={`/onboarding?step=3${persona ? `&persona=${persona}` : ''}`}
+                class="text-sonoro-amber-dark hover:text-sonoro-amber underline underline-offset-2 transition-colors"
+              >
+                Skip and finish setup →
+              </a>
+            </p>
+          </div>
+        )}
+
+        <!-- ── Step 3: Ready ── -->
+        {step === 3 && (
+          <div class="text-center animate-fade-in">
+            <!-- Success icon -->
+            <div class="relative mx-auto mb-8 w-fit">
+              <div class="flex h-20 w-20 items-center justify-center rounded-3xl bg-emerald-50 border border-emerald-100 mx-auto">
+                <svg class="w-9 h-9 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+                  <path d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </div>
+              <!-- Ambient glow -->
+              <div class="absolute inset-0 rounded-3xl blur-xl bg-emerald-200/40 -z-10 scale-110" aria-hidden="true" />
+            </div>
+
+            <h1 class="text-2xl font-bold text-sonoro-900 tracking-tight mb-2">
+              You're all set{name ? `, ${name}` : ''}.
+            </h1>
+            <p class="text-sm text-sonoro-600 mb-8 max-w-sm mx-auto leading-relaxed">
+              Your account is ready. Head to your dashboard to start listening.
+            </p>
+
+            <div class="flex flex-col sm:flex-row gap-3 justify-center mb-10">
+              <a href="/dashboard" class="btn-accent btn-lg">
+                Open dashboard
+                <svg class="w-4 h-4" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </a>
+              <a href="/dashboard/upload" class="btn-outline btn-lg">Upload a PDF</a>
+            </div>
+
+            <!-- Tips: personalized if persona selected -->
+            <div class="text-left rounded-2xl border border-sonoro-border bg-sonoro-white p-6">
+              <p class="text-xs font-semibold text-sonoro-900 mb-4">
+                {currentPersona ? `Tips for ${currentPersona.label.toLowerCase()}s` : 'Get more out of Sonoro'}
+              </p>
+              <div class="space-y-3">
+                {(currentPersona?.tips ?? [
+                  { t: 'Use 1.5× speed to get through material 50% faster.' },
+                  { t: 'Chapter detection lets you skip straight to what matters.' },
+                  { t: 'Download the MP3 for offline listening on commutes.' },
+                  { t: 'Immersive mode creates a focused, distraction-free listening experience.' },
+                ]).map(({ t }) => (
+                  <div class="flex items-start gap-3">
+                    <div class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-sonoro-amber-light mt-0.5">
+                      <svg class="w-2.5 h-2.5 text-sonoro-amber-dark" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true">
+                        <path d="M8.433 3.836a.5.5 0 0 0-.866-.5L4.5 7.134 2.433 5.066a.5.5 0 1 0-.706.707l2.5 2.5a.5.5 0 0 0 .773-.086l3.433-4.35Z"/>
+                      </svg>
+                    </div>
+                    <p class="text-xs text-sonoro-600 leading-relaxed">{t}</p>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         )}
