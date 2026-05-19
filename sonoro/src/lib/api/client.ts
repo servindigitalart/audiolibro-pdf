@@ -12,6 +12,8 @@
 
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios';
 import Cookies from 'js-cookie';
+import type { UploadResponse } from './types';
+import type { UploadResponse } from './types';
 
 if (typeof window !== 'undefined' && !import.meta.env.PUBLIC_API_URL) {
   console.error('[Sonoro] PUBLIC_API_URL is not set. Uploads and API calls will fail in production. Set this variable in your Vercel environment settings.');
@@ -101,10 +103,10 @@ export async function getMe() {
 export async function uploadDocument(
   file: File,
   onProgress?: (pct: number) => void
-) {
+): Promise<UploadResponse> {
   const fd = new FormData();
   fd.append('file', file);
-  const { data } = await api.post('/documents/upload', fd, {
+  const { data } = await api.post<UploadResponse>('/documents/upload', fd, {
     headers: { 'Content-Type': 'multipart/form-data' },
     onUploadProgress: (e) => {
       if (onProgress && e.total) onProgress(Math.round((e.loaded / e.total) * 100));

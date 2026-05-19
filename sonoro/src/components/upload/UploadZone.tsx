@@ -76,8 +76,9 @@ export default function UploadZone() {
     setStage('uploading');
     setUploadPct(0);
     try {
-      const { document } = await uploadDocument(f, setUploadPct);
-      setDocId(document.id);
+      const result = await uploadDocument(f, setUploadPct);
+      if (!result?.id) throw new Error('Upload succeeded but the server returned an invalid response.');
+      setDocId(result.id);
       setStage('processing');
     } catch (err) {
       setError(getErrorMessage(err));
