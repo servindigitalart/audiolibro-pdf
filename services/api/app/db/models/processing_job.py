@@ -91,8 +91,14 @@ class ProcessingJob(Base):
     )
     
     # Job configuration
+    #
+    # native_enum=False + values_callable: same fix as Document.upload_status (migration 012).
+    # SQLAlchemy 2.0 + asyncpg sends enum member .name ("FULL_PROCESS") through the native
+    # codec instead of .value ("full_process"), causing InvalidTextRepresentationError.
+    # Storing as VARCHAR(50) bypasses the native codec entirely. Migration 014 converts
+    # the columns from PostgreSQL ENUM to VARCHAR(50).
     job_type = Column(
-        Enum(JobType),
+        Enum(JobType, native_enum=False, values_callable=lambda obj: [e.value for e in obj]),
         nullable=False,
         default=JobType.FULL_PROCESS,
         index=True,
@@ -104,10 +110,10 @@ class ProcessingJob(Base):
         default=5,
         comment="Job priority (1=highest, 10=lowest)"
     )
-    
+
     # Status tracking
     status = Column(
-        Enum(JobStatus),
+        Enum(JobStatus, native_enum=False, values_callable=lambda obj: [e.value for e in obj]),
         nullable=False,
         default=JobStatus.QUEUED,
         index=True,
