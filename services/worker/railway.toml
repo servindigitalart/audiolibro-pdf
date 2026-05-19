@@ -1,11 +1,12 @@
 [build]
 builder = "nixpacks"
-# The worker shares the API codebase. Point Railway's root directory to
-# services/api/ (configured in the Railway dashboard, not here), so that
-# app.celery_app resolves correctly.
+# The worker shares the API codebase.
+# Railway dashboard: set Root Directory = services/api for this service
+# so that "app.*" imports resolve correctly.
 
 [deploy]
-# Run from services/api/ root — Railway dashboard: Root Directory = services/api
-startCommand = "celery -A app.celery_app worker --loglevel=info"
+# start.sh exports PYTHONPATH before launching Celery, preventing the
+# ModuleNotFoundError: No module named 'app' that bare celery commands hit.
+startCommand = "bash start.sh"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3

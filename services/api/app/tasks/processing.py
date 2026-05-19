@@ -27,23 +27,11 @@ from app.celery_app import celery_app
 from app.core.config import settings
 from app.db.models.processing_job import ProcessingJob, JobStatus
 from app.db.models.document import Document, ProcessingStatus
-from app.services.tts.tts_service import TTSService
-from app.services.storage_service import get_storage_service
-from app.services.document_structure.engine import DocumentStructureEngine
-from app.services.audio.assembler import AudioAssembler
-from app.services.audio.normalizer import AudioNormalizer
-from app.services.audio.metadata import AudioMetadataWriter, AudioMetadata
-from app.financial.financial_metrics import (
-    chapters_detected_total,
-    chapter_detection_confidence,
-    text_chunks_generated_total,
-    document_structure_analysis_duration,
-    audio_assembly_duration_seconds,
-    audio_file_size_bytes,
-    full_audiobook_generated_total,
-    audio_normalization_duration_seconds,
-    audio_metadata_write_duration_seconds,
-)
+
+# Heavy service/audio imports are deferred to inside _process_job_async so that
+# missing optional dependencies (ffmpeg, google-cloud-tts, pydub, etc.) do NOT
+# prevent the worker from starting and registering tasks.  An ImportError inside
+# the task body surfaces as a task failure rather than a silent startup crash.
 
 logger = logging.getLogger(__name__)
 
@@ -160,23 +148,29 @@ def process_document_job(self, job_id: str):
 async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
     """
     Main async processing logic.
-    
-    BLOCK 6A: Real TTS integration (simplified for single-document processing).
-    
-    Process flow:
-    1. Fetch job and document
-    2. Extract text from document (placeholder for now)
-    3. Call TTS service to synthesize audio
-    4. Store MP3 in Spaces
-    5. Update job status
-    
-    Future enhancements (not in Block 6A):
-    - Chapter detection
-    - Chunked processing
-    - Audio concatenation
-    - Caching
+
+    Imports are deferred here rather than at module level so that missing
+    optional packages (google-cloud-tts, pydub, ffmpeg-python, etc.) surface
+    as task failures rather than silent worker startup crashes.
     """
-    
+    # Deferred heavy imports
+    from app.services.tts.tts_service import TTSService
+    from app.services.storage_service import get_storage_service
+    from app.services.document_structure.engine import DocumentStructureEngine
+    from app.services.audio.assembler import AudioAssembler
+    from app.services.audio.normalizer import AudioNormalizer
+    from app.services.audio.metadata import AudioMetadataWriter, AudioMetadata
+    from app.financial.financial_metrics import (
+        chapters_detected_total,
+        chapter_detection_confidence,
+        document_structure_analysis_duration,
+        audio_assembly_duration_seconds,
+        audio_file_size_bytes,
+        full_audiobook_generated_total,
+        audio_normalization_duration_seconds,
+        audio_metadata_write_duration_seconds,
+    )
+
     async with AsyncSessionLocal() as session:
         try:
             # Fetch job

@@ -39,9 +39,8 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     
-    # Result backend
+    # Result backend (plain Redis — not Sentinel; master_name removed)
     result_backend_transport_options={
-        "master_name": "mymaster",
         "socket_keepalive": True,
     },
     result_expires=3600,  # Results expire after 1 hour

@@ -36,6 +36,7 @@ from fastapi import (
     status,
     Query,
 )
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth_dependencies import get_current_active_user
@@ -49,8 +50,11 @@ from app.schemas.document import (
     DocumentDownloadURL,
     DocumentDeleteResponse,
 )
+from app.db.models.processing_job import ProcessingJob as ProcessingJobModel, JobStatus
 from app.services.document_service import DocumentService
 from app.services.account_service import AccountService
+from app.services.processing_service import ProcessingService
+from app.schemas.processing import ProcessDocumentRequest
 from app.financial.financial_metrics import (
     documents_uploaded_total,
     documents_failed_total,
@@ -156,7 +160,32 @@ async def upload_document(
                 'duration_seconds': upload_duration
             }
         )
-        
+
+        # Auto-enqueue processing immediately after upload.
+        # A failed enqueue is logged but does not fail the upload response —
+        # the user can still see their document and retry from the dashboard.
+        try:
+            processing_service = ProcessingService(db)
+            await processing_service.create_processing_job(
+                document_id=result.id,
+                user=current_user,
+                request=ProcessDocumentRequest(),
+            )
+            logger.info(
+                f"Processing job enqueued",
+                extra={'document_id': str(result.id), 'user_id': str(current_user.id)}
+            )
+        except Exception as enqueue_err:
+            logger.error(
+                f"Failed to auto-enqueue processing job",
+                extra={
+                    'document_id': str(result.id),
+                    'user_id': str(current_user.id),
+                    'error': str(enqueue_err)
+                },
+                exc_info=True
+            )
+
         return result
         
     except HTTPException:
@@ -381,6 +410,79 @@ async def delete_document(
     )
     
     return result
+
+
+# ============================================
+# PROCESSING JOB STATUS ENDPOINT
+# ============================================
+
+def _derive_stage(progress: int) -> str | None:
+    """Map progress percentage to a frontend-friendly stage label."""
+    if progress <= 20:
+        return "analyzing"
+    if progress <= 60:
+        return "detecting_chapters"
+    if progress <= 90:
+        return "generating_audio"
+    return "finalizing"
+
+
+@router.get(
+    "/{document_id}/job",
+    summary="Get Processing Job for Document",
+    description="Return the most recent processing job for a document, used by the upload UI to poll progress.",
+)
+async def get_document_job(
+    document_id: UUID,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Return the latest processing job for a document, or 404 if none exists."""
+
+    # Verify document ownership
+    from app.db.models.document import Document as DocumentModel
+    doc_result = await db.execute(
+        select(DocumentModel).where(
+            DocumentModel.id == document_id,
+            DocumentModel.user_id == current_user.id,
+        )
+    )
+    doc = doc_result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    # Find the most recent non-cancelled job for this document
+    job_result = await db.execute(
+        select(ProcessingJobModel)
+        .where(
+            ProcessingJobModel.document_id == document_id,
+            ProcessingJobModel.status != JobStatus.CANCELLED,
+        )
+        .order_by(ProcessingJobModel.created_at.desc())
+        .limit(1)
+    )
+    job = job_result.scalar_one_or_none()
+
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No processing job found")
+
+    progress = job.progress_percentage or 0
+    status_str = job.status.value if hasattr(job.status, 'value') else str(job.status)
+
+    return {
+        "id":           str(job.id),
+        "document_id":  str(job.document_id),
+        "status":       status_str,
+        "stage":        _derive_stage(progress) if status_str == "processing" else None,
+        "progress":     progress,
+        "started_at":   job.started_at.isoformat() if job.started_at else None,
+        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+        "error_message": job.error_message,
+        "metadata": {
+            "job_type":    job.job_type,
+            "retry_count": job.retry_count,
+        },
+    }
 
 
 # ============================================
