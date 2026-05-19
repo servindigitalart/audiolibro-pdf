@@ -140,15 +140,29 @@ class Document(Base):
     )
 
     # Status tracking
+    #
+    # Two bugs fixed here (SQLAlchemy 2.0.25 + asyncpg 0.29):
+    #
+    # Bug 1 — wrong values in DB: SQLAlchemy 2.0.25 uses enum member NAMES
+    # (uppercase: "PENDING") as database values by default, even for str enums.
+    # Fix: values_callable forces it to use member VALUES (lowercase: "pending").
+    #
+    # Bug 2 — asyncpg native codec collision: with native_enum=True, asyncpg's
+    # type codec for PostgreSQL enum columns can send the Python member name instead
+    # of value, causing: invalid input value for enum uploadstatus: "PENDING".
+    # Fix: native_enum=False stores as VARCHAR, bypassing the native enum codec.
+    #
+    # Migration 012 converts the columns from PostgreSQL ENUM to VARCHAR(50).
+
     upload_status = Column(
-        Enum(UploadStatus),
+        Enum(UploadStatus, native_enum=False, values_callable=lambda obj: [e.value for e in obj]),
         nullable=False,
         default=UploadStatus.PENDING,
         index=True,
         comment="Upload completion status"
     )
     processing_status = Column(
-        Enum(ProcessingStatus),
+        Enum(ProcessingStatus, native_enum=False, values_callable=lambda obj: [e.value for e in obj]),
         nullable=False,
         default=ProcessingStatus.NOT_STARTED,
         index=True,
