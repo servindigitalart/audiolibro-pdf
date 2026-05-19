@@ -15,9 +15,15 @@
 
 set -euo pipefail
 
+# Make the app package importable for both alembic/env.py and uvicorn.
+# Railway's nixpacks builder places code in /app; $(pwd) is the same directory
+# at runtime, so this works whether the container root is /app or elsewhere.
+export PYTHONPATH="${PYTHONPATH:+${PYTHONPATH}:}$(pwd)"
+
 MAX_RETRIES=5
 RETRY_DELAY=5
 
+echo "[startup] PYTHONPATH=${PYTHONPATH}"
 echo "[startup] Running database migrations..."
 
 for attempt in $(seq 1 $MAX_RETRIES); do
