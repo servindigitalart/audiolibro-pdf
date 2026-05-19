@@ -107,3 +107,21 @@ export interface ApiError {
   detail: string;
   status?: number;
 }
+
+/** Mirrors the backend DocumentUploadResponse schema. */
+export interface UploadResponse {
+  id: string;
+  user_id: string;
+  filename: string;
+  original_filename: string;
+  file_size_bytes: number;
+  file_size_mb: number;
+  mime_type: string;
+  upload_status: string;
+  processing_status: string;
+  page_count: number | null;
+  character_estimate: number | null;
+  language_detected: string | null;
+  checksum_sha256: string;
+  created_at: string;
+}

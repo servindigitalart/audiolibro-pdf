@@ -11,12 +11,25 @@ from enum import Enum
 class PlanTier(str, Enum):
     """
     Subscription plan tiers.
+
+    Values are uppercase to match the DB column (VARCHAR default 'FREE') and
+    the canonical pricing/tiers.py PlanTier enum.  The _missing_ hook accepts
+    both 'FREE' and 'free' so legacy lowercase data never raises ValueError.
     """
-    
-    FREE = "free"
-    BASIC = "basic"
-    PRO = "pro"
-    ENTERPRISE = "enterprise"
+
+    FREE = "FREE"
+    BASIC = "BASIC"
+    PRO = "PRO"
+    ENTERPRISE = "ENTERPRISE"
+
+    @classmethod
+    def _missing_(cls, value: object):
+        if isinstance(value, str):
+            upper = value.upper()
+            for member in cls:
+                if member.value == upper:
+                    return member
+        return None
 
 
 @dataclass
