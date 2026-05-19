@@ -5,16 +5,34 @@ import { fetchDocuments, fetchAccountOverview } from '@/lib/api/server';
 
 const token = (Astro.locals as any).token as string;
 
-const [documents, overview] = await Promise.all([
-  fetchDocuments(token).catch(() => []),
-  fetchAccountOverview(token).catch(() => null),
-]);
+let documents: Awaited<ReturnType<typeof fetchDocuments>> = [];
+let overview: Awaited<ReturnType<typeof fetchAccountOverview>> | null = null;
+
+try {
+  [documents, overview] = await Promise.all([
+    fetchDocuments(token),
+    fetchAccountOverview(token).catch((err: unknown) => {
+      console.error('[SSR /dashboard] fetchAccountOverview failed:', err instanceof Error ? err.message : err);
+      return null;
+    }),
+  ]);
+} catch (err: unknown) {
+  console.error('[SSR /dashboard] fetchDocuments failed:', err instanceof Error ? err.message : err);
+  documents = [];
+}
+
+// Belt-and-suspenders: ensure documents is always a real array
+const docList = Array.isArray(documents) ? documents : [];
 
 const user       = overview?.user;
 const usage      = overview?.usage;
-const completed  = documents.filter(d => d.status === 'completed').length;
-const processing = documents.filter(d => d.status === 'processing' || d.status === 'pending').length;
-const charPct    = usage ? Math.min(Math.round((usage.chars_used / usage.chars_limit) * 100), 100) : 0;
+const completed  = docList.filter(d => d.status === 'completed').length;
+const processing = docList.filter(d => d.status === 'processing' || d.status === 'pending').length;
+
+// Guard against chars_limit === 0 (free tier with no limit configured returns 0)
+const charPct    = (usage && usage.chars_limit > 0)
+  ? Math.min(Math.round((usage.chars_used / usage.chars_limit) * 100), 100)
+  : 0;
 
 const hour     = new Date().getHours();
 const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
@@ -29,9 +47,9 @@ const name     = user?.email?.split('@')[0] ?? null;
       {greeting}{name ? `, ${name}` : ''}.
     </h1>
     <p class="text-sm text-sonoro-muted mt-1">
-      {documents.length === 0
+      {docList.length === 0
         ? 'Ready to turn your first PDF into an audiobook?'
-        : documents.length === 1
+        : docList.length === 1
         ? 'Your library is growing.'
         : `${completed} audiobook${completed !== 1 ? 's' : ''} ready to listen.`}
     </p>
@@ -48,7 +66,7 @@ const name     = user?.email?.split('@')[0] ?? null;
           </svg>
         </div>
       </div>
-      <p class="text-2xl font-bold tabular text-sonoro-900 tracking-tight">{documents.length}</p>
+      <p class="text-2xl font-bold tabular text-sonoro-900 tracking-tight">{docList.length}</p>
       <p class="text-xs text-sonoro-muted mt-0.5">Total uploaded</p>
     </div>
 
@@ -65,15 +83,13 @@ const name     = user?.email?.split('@')[0] ?? null;
     </div>
 
     <div class="card-base p-5 animate-fade-in" style="animation-delay:180ms;animation-fill-mode:both">
-      <div class="flex items-center justify-between mb-3">
-        <div class:list={[
-          'flex h-8 w-8 items-center justify-center rounded-lg border',
-          processing > 0 ? 'bg-amber-50 border-amber-100 text-amber-600' : 'bg-sonoro-surface border-sonoro-border text-sonoro-400',
-        ]}>
-          <svg class:list={['w-4 h-4', processing > 0 && 'animate-spin-slow']} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-            <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>
-          </svg>
-        </div>
+      <div class:list={[
+        'flex h-8 w-8 items-center justify-center rounded-lg border',
+        processing > 0 ? 'bg-amber-50 border-amber-100 text-amber-600' : 'bg-sonoro-surface border-sonoro-border text-sonoro-400',
+      ]}>
+        <svg class:list={['w-4 h-4', processing > 0 && 'animate-spin-slow']} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+          <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>
+        </svg>
       </div>
       <p class="text-2xl font-bold tabular text-sonoro-900 tracking-tight">{processing > 0 ? processing : '—'}</p>
       <p class="text-xs text-sonoro-muted mt-0.5">Processing now</p>
@@ -117,7 +133,7 @@ const name     = user?.email?.split('@')[0] ?? null;
   )}
 
   <!-- Empty state -->
-  {documents.length === 0 && (
+  {docList.length === 0 && (
     <div class="card-base overflow-hidden animate-scale-in" style="animation-delay:200ms;animation-fill-mode:both">
       <!-- Ambient gradient header -->
       <div
@@ -166,20 +182,20 @@ const name     = user?.email?.split('@')[0] ?? null;
   )}
 
   <!-- Document library -->
-  {documents.length > 0 && (
+  {docList.length > 0 && (
     <div class="animate-fade-in" style="animation-delay:300ms;animation-fill-mode:both">
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-sm font-semibold text-sonoro-900">Recent audiobooks</h2>
-        {documents.length > 5 && (
+        {docList.length > 5 && (
           <a href="/dashboard/documents" class="text-xs font-medium text-sonoro-amber-dark hover:text-sonoro-amber transition-colors">
-            View all {documents.length} →
+            View all {docList.length} →
           </a>
         )}
       </div>
-      <DocumentList initialDocuments={documents.slice(0, 5)} client:load />
+      <DocumentList initialDocuments={docList.slice(0, 5)} client:load />
 
       <!-- Upload nudge when library has few items -->
-      {documents.length < 4 && (
+      {docList.length < 4 && (
         <div class="mt-4 flex items-center justify-between rounded-2xl border border-dashed border-sonoro-border bg-sonoro-surface/60 px-5 py-4">
           <div>
             <p class="text-sm font-medium text-sonoro-700">Add more to your library</p>

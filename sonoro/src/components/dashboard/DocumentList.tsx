@@ -99,9 +99,9 @@ export default function DocumentList({ initialDocuments }: Props) {
                 </span>
               </div>
               <p className="text-xs text-sonoro-400 tabular">
-                {fmtFileSize(doc.file_size)}
+                {doc.file_size ? fmtFileSize(doc.file_size) : '—'}
                 {doc.metadata?.pages ? ` · ${doc.metadata.pages}p` : ''}
-                {' · '}{fmtRelative(doc.upload_date)}
+                {doc.upload_date ? ` · ${fmtRelative(doc.upload_date)}` : ''}
               </p>
 
               {/* Processing indeterminate bar */}
