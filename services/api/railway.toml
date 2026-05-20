@@ -6,3 +6,4 @@ healthcheckPath = "/api/v1/health"
 healthcheckTimeout = 30
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
+# multi-service commands are set in Railway dashboard
