@@ -99,6 +99,10 @@ class LocalStorageService:
     async def document_exists(self, storage_path: str) -> bool:
         return os.path.exists(self._full(storage_path))
 
+    async def download_document(self, storage_path: str, local_path: str) -> None:
+        """Copy from local storage root to a destination path."""
+        shutil.copy2(self._full(storage_path), local_path)
+
     async def get_document_metadata(self, storage_path: str) -> Optional[dict]:
         return {}
 
@@ -289,6 +293,23 @@ class S3StorageService:
             return True
         except ClientError:
             return False
+
+    async def download_document(self, storage_path: str, local_path: str) -> None:
+        """Download an object from S3 to a local file path."""
+        from botocore.exceptions import ClientError
+
+        try:
+            self.client.download_file(self.bucket, storage_path, local_path)
+            logger.info(
+                "[SONORO] s3_download_ok storage_path=%s local_path=%s",
+                storage_path, local_path,
+            )
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "Unknown")
+            logger.error(
+                "S3 download failed (code=%s key=%s): %s", code, storage_path, exc
+            )
+            raise
 
     async def get_document_metadata(self, storage_path: str) -> Optional[dict]:
         from botocore.exceptions import ClientError

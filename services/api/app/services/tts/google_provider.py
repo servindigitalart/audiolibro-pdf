@@ -15,6 +15,7 @@ We use Neural2 for best quality.
 """
 
 import asyncio
+import json
 import logging
 from typing import Optional
 
@@ -60,24 +61,42 @@ class GoogleTTSProvider(TTSProvider):
     def _initialize_client(self):
         """Initialize the Google Cloud TTS client with credentials."""
         try:
-            # Check if we have service account credentials
-            if hasattr(settings, 'google_tts_credentials_json') and settings.google_tts_credentials_json:
-                # Use service account JSON
-                credentials = service_account.Credentials.from_service_account_file(
-                    settings.google_tts_credentials_json
-                )
+            raw = (settings.google_tts_credentials_json or "").strip()
+            if raw:
+                if raw.startswith("{"):
+                    # Inline JSON content — typical Railway env var.
+                    # GOOGLE_TTS_CREDENTIALS_JSON holds the full service-account
+                    # key JSON as a string; no temp file needed.
+                    info = json.loads(raw)
+                    credentials = service_account.Credentials.from_service_account_info(
+                        info,
+                        scopes=["https://www.googleapis.com/auth/cloud-platform"],
+                    )
+                    logger.info(
+                        "[SONORO] tts_credentials_source=service_account_json "
+                        "project=%s client_email=%s",
+                        info.get("project_id", "<unknown>"),
+                        info.get("client_email", "<unknown>"),
+                    )
+                else:
+                    # Legacy: treat value as a file path (local dev only).
+                    credentials = service_account.Credentials.from_service_account_file(
+                        raw,
+                        scopes=["https://www.googleapis.com/auth/cloud-platform"],
+                    )
+                    logger.info(
+                        "[SONORO] tts_credentials_source=service_account_file path=%s", raw
+                    )
                 self.client = texttospeech_v1.TextToSpeechClient(credentials=credentials)
-            elif hasattr(settings, 'google_tts_api_key') and settings.google_tts_api_key:
-                # Use API key (simpler but less secure)
-                self.client = texttospeech_v1.TextToSpeechClient()
             else:
-                # Use application default credentials (for GCP environments)
+                # Fall back to Application Default Credentials (GCP-managed environments).
                 self.client = texttospeech_v1.TextToSpeechClient()
-            
-            logger.info("Google Cloud TTS client initialized successfully")
-            
+                logger.info("[SONORO] tts_credentials_source=application_default_credentials")
+
+            logger.info("[SONORO] tts_client_ready")
+
         except Exception as e:
-            logger.error(f"Failed to initialize Google TTS client: {str(e)}")
+            logger.error("[SONORO] tts_init_failed error=%s", e, exc_info=True)
             raise TTSProviderError(
                 message="Failed to initialize Google TTS",
                 provider="google",

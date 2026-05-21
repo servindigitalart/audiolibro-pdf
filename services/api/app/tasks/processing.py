@@ -210,30 +210,36 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
             
             await session.commit()
             
+            # Initialize storage early — needed to download the PDF before Step 1.
+            # Both API and worker share the same S3 bucket; the API writes the PDF
+            # and the worker reads it.  With STORAGE_BACKEND=local the two containers
+            # have separate filesystems, so the file would not be found.
+            storage_service = get_storage_service()
+
             # ============================================
             # STEP 1: Analyze Document Structure (BLOCK 6B)
             # ============================================
-            logger.info(f"Step 1: Analyzing document structure")
+            logger.info("[SONORO] step=1 action=analyze_document_structure")
             job.progress_percentage = 5
             await session.commit()
-            
-            # Get PDF path from storage (assuming local path or download)
-            # For now, use storage_path as-is (adjust based on your storage setup)
-            pdf_path = f"/tmp/{document.id}.pdf"  # Temporary path
-            
-            # TODO: Download PDF from Spaces if not local
-            # For now, assume PDF is accessible at storage_path
-            
+
+            # Download PDF from shared object storage to a local temp file.
+            # document.storage_path is an S3 key (e.g. "documents/<uid>/<id>.pdf"),
+            # not a filesystem path — fitz.open() needs a real local path.
+            pdf_path = f"/tmp/sonoro_{document.id}.pdf"
+            await storage_service.download_document(document.storage_path, pdf_path)
+            logger.info(
+                "[SONORO] pdf_downloaded storage_path=%s local_path=%s",
+                document.storage_path, pdf_path,
+            )
+
             structure_start = time.time()
-            
+
             try:
-                # Initialize structure engine
                 structure_engine = DocumentStructureEngine()
-                
-                # Analyze document and detect chapters
                 structure = await structure_engine.analyze_document(
                     document_id=document.id,
-                    pdf_path=document.storage_path,  # May need adjustment
+                    pdf_path=pdf_path,
                     db=session
                 )
                 
@@ -272,8 +278,8 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
             await session.commit()
             
             tts_service = TTSService()
-            storage_service = get_storage_service()
-            
+            # storage_service already initialized above Step 1
+
             # Track chapter audio paths for assembly
             chapter_audio_paths = []
             
