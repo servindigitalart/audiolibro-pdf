@@ -113,14 +113,10 @@ def process_document_job(self, job_id: str):
     
     # Convert string to UUID
     job_uuid = UUID(job_id)
-    
+
     logger.info(
-        f"Starting processing job",
-        extra={
-            "job_id": str(job_uuid),
-            "task_id": self.request.id,
-            "retry_count": self.request.retries
-        }
+        "[SONORO] worker_task_received task=process_document_job job_id=%s task_id=%s retry=%s",
+        job_id, self.request.id, self.request.retries,
     )
     
     try:

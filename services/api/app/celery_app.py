@@ -71,6 +71,11 @@ celery_app.conf.update(
         Queue("low_priority"),
     ),
     task_default_queue="normal",
+
+    # Disable Redis priority sub-queues. Without this, any apply_async(priority=N)
+    # with N>0 would write to a suffixed key (e.g. "normal\x06\x166") that the
+    # worker never polls. We route by queue name instead (high_priority/normal/low_priority).
+    broker_transport_options={"priority_steps": []},
     
     # Monitoring
     task_send_sent_event=True,
@@ -105,30 +110,12 @@ celery_app.conf.task_routes = (route_task,)
 
 @task_prerun.connect
 def task_prerun_handler(sender=None, task_id=None, task=None, args=None, kwargs=None, **extra):
-    """Log task start."""
-    logger.info(
-        f"Task started: {task.name}",
-        extra={
-            "task_id": task_id,
-            "task_name": task.name,
-            "args": args,
-            "kwargs": kwargs
-        }
-    )
+    logger.info("[SONORO] worker_task_received task=%s task_id=%s args=%s", task.name, task_id, args)
 
 
 @task_postrun.connect
 def task_postrun_handler(sender=None, task_id=None, task=None, args=None, kwargs=None, retval=None, state=None, **extra):
-    """Log task completion."""
-    logger.info(
-        f"Task completed: {task.name}",
-        extra={
-            "task_id": task_id,
-            "task_name": task.name,
-            "state": state,
-            "return_value": retval
-        }
-    )
+    logger.info("[SONORO] worker_task_done task=%s task_id=%s state=%s", task.name, task_id, state)
 
 
 @task_failure.connect

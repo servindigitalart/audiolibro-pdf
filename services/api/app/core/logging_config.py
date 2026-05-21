@@ -89,11 +89,11 @@ def setup_logging() -> None:
     root_logger.setLevel(log_level)
     root_logger.addHandler(console_handler)
 
-    # Reduce noise from third-party libraries
+    # Suppress chatty third-party loggers. sqlalchemy.engine would flood Railway
+    # logs with a SELECT per poll tick if APP_ENV were ever set incorrectly.
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
-    logging.getLogger("sqlalchemy.engine").setLevel(
-        logging.INFO if settings.is_development else logging.WARNING
-    )
+    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+    logging.getLogger("sqlalchemy.pool").setLevel(logging.WARNING)
 
     # Create app logger
     logger = logging.getLogger("sonoro")

@@ -129,54 +129,53 @@ class ProcessingService:
         await self.db.commit()
         await self.db.refresh(job)
         
+        # Map priority tier to queue name (mirrors route_task in celery_app.py).
+        # Do NOT pass priority= to apply_async: with Redis broker, Kombu translates
+        # a non-zero message priority into a suffixed Redis key (e.g. "normal\x06\x166")
+        # that the worker never polls, silently dropping the task.
+        if request.priority <= 3:
+            target_queue = "high_priority"
+        elif request.priority >= 8:
+            target_queue = "low_priority"
+        else:
+            target_queue = "normal"
+
         logger.info(
-            f"Processing job created",
-            extra={
-                "job_id": str(job.id),
-                "document_id": str(document_id),
-                "user_id": str(user.id),
-                "job_type": job_type.value,
-                "priority": request.priority
-            }
+            "[SONORO] job_created job_id=%s document_id=%s queue=%s priority=%s",
+            job.id, document_id, target_queue, request.priority,
         )
-        
+
         # Enqueue Celery task
         try:
             celery_task = process_document_job.apply_async(
                 args=[str(job.id)],
-                priority=request.priority,
-                task_id=str(job.id),  # Use job ID as task ID for easy tracking
+                queue=target_queue,          # explicit queue — bypasses priority suffix bug
+                task_id=str(job.id),
             )
-            
+
             # Update job with Celery task ID
             job.celery_task_id = celery_task.id
             await self.db.commit()
-            
+
             logger.info(
-                f"Job enqueued to Celery",
-                extra={
-                    "job_id": str(job.id),
-                    "celery_task_id": celery_task.id,
-                    "priority": request.priority
-                }
+                "[SONORO] task_enqueued job_id=%s celery_task_id=%s queue=%s",
+                job.id, celery_task.id, target_queue,
             )
-            
+
         except Exception as e:
             logger.error(
-                f"Failed to enqueue job: {str(e)}",
-                extra={
-                    "job_id": str(job.id),
-                    "document_id": str(document_id)
-                }
+                "[SONORO] enqueue_failed job_id=%s document_id=%s error=%s",
+                job.id, document_id, str(e),
+                exc_info=True,
             )
-            
+
             # Mark job as failed
             job.status = JobStatus.FAILED
             job.error_message = f"Failed to enqueue job: {str(e)}"
             document.processing_status = ProcessingStatus.FAILED
-            
+
             await self.db.commit()
-            
+
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to enqueue processing job"
