@@ -72,11 +72,6 @@ celery_app.conf.update(
     ),
     task_default_queue="normal",
 
-    # Disable Redis priority sub-queues. Without this, any apply_async(priority=N)
-    # with N>0 would write to a suffixed key (e.g. "normal\x06\x166") that the
-    # worker never polls. We route by queue name instead (high_priority/normal/low_priority).
-    broker_transport_options={"priority_steps": []},
-    
     # Monitoring
     task_send_sent_event=True,
     worker_send_task_events=True,

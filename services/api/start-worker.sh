@@ -24,6 +24,7 @@ echo "[worker-startup] PYTHONPATH=${PYTHONPATH}"
 _BROKER_DISPLAY=$(echo "${CELERY_BROKER_URL:-<not set>}" | sed 's|://[^@]*@|://**redacted**@|')
 echo "[worker-startup] CELERY_BROKER_URL=${_BROKER_DISPLAY}"
 echo "[worker-startup] Starting Celery worker..."
+echo "[worker-startup] Consuming queues: high_priority,normal,low_priority"
 
 exec celery -A app.celery_app worker \
     --loglevel=info \
