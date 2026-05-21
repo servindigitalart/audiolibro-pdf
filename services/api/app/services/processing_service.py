@@ -8,7 +8,7 @@ Pure orchestration - no TTS implementation.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Tuple
 from uuid import UUID
 
@@ -98,13 +98,22 @@ class ProcessingService:
             HTTPException: If validation fails
         """
         
+        # Expire jobs that have been QUEUED for > 5 minutes without being picked up.
+        # These are artefacts from previous deploys where tasks were routed to the
+        # wrong Redis key and never consumed.  Without this, the per-user limit
+        # blocks every subsequent upload once 3 orphaned QUEUED rows accumulate.
+        await self._expire_stale_queued_jobs(user.id)
+
         # Validate document
+        logger.info("[SONORO] validate_doc document_id=%s user_id=%s", document_id, user.id)
         document = await self._validate_document(document_id, user.id)
-        
+
         # Check for existing active jobs for this document
+        logger.info("[SONORO] check_not_processing document_id=%s", document_id)
         await self._check_document_not_processing(document_id)
-        
+
         # Enforce concurrency limits
+        logger.info("[SONORO] enforce_limits user_id=%s", user.id)
         await self._enforce_user_job_limit(user.id)
         await self._enforce_global_job_limit()
         
@@ -415,6 +424,32 @@ class ProcessingService:
     # VALIDATION HELPERS
     # ============================================
     
+    async def _expire_stale_queued_jobs(self, user_id: UUID) -> None:
+        """Mark QUEUED jobs older than 5 min with no started_at as FAILED.
+
+        Jobs in this state were enqueued but never consumed by a worker (e.g. they
+        were routed to a wrong Redis key before the priority-suffix fix).  They
+        would permanently block the per-user concurrency limit otherwise.
+        """
+        cutoff = datetime.utcnow() - timedelta(minutes=5)
+        result = await self.db.execute(
+            select(ProcessingJob).where(
+                ProcessingJob.user_id == user_id,
+                ProcessingJob.status == JobStatus.QUEUED,
+                ProcessingJob.started_at.is_(None),
+                ProcessingJob.created_at < cutoff,
+            )
+        )
+        stale = result.scalars().all()
+        if stale:
+            for job in stale:
+                job.status = JobStatus.FAILED
+                job.error_message = "Expired: job was queued but never picked up by a worker"
+            await self.db.commit()
+            logger.info(
+                "[SONORO] expired_stale_jobs count=%d user_id=%s", len(stale), user_id
+            )
+
     async def _validate_document(self, document_id: UUID, user_id: UUID) -> Document:
         """Validate document exists, belongs to user, and is ready for processing."""
         

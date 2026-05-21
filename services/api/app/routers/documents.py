@@ -176,14 +176,14 @@ async def upload_document(
                 extra={'document_id': str(result.id), 'user_id': str(current_user.id)}
             )
         except Exception as enqueue_err:
+            # str(HTTPException) returns "" — always log .detail and the type explicitly.
+            err_detail = getattr(enqueue_err, "detail", None) or repr(enqueue_err)
             logger.error(
-                f"Failed to auto-enqueue processing job",
-                extra={
-                    'document_id': str(result.id),
-                    'user_id': str(current_user.id),
-                    'error': str(enqueue_err)
-                },
-                exc_info=True
+                "[SONORO] auto_enqueue_failed document_id=%s user_id=%s "
+                "error_type=%s error=%s",
+                result.id, current_user.id,
+                type(enqueue_err).__name__, err_detail,
+                exc_info=True,
             )
 
         return result
