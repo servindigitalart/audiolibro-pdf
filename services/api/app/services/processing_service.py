@@ -425,30 +425,60 @@ class ProcessingService:
     # ============================================
     
     async def _expire_stale_queued_jobs(self, user_id: UUID) -> None:
-        """Mark QUEUED jobs older than 5 min with no started_at as FAILED.
+        """Expire stale QUEUED and PROCESSING jobs so they don't block the per-user limit.
 
-        Jobs in this state were enqueued but never consumed by a worker (e.g. they
-        were routed to a wrong Redis key before the priority-suffix fix).  They
-        would permanently block the per-user concurrency limit otherwise.
+        Two classes of abandoned jobs accumulate during worker outages or mis-routing:
+
+        1. QUEUED, created_at > 5 min ago — task was enqueued to Redis but the worker
+           never consumed it (e.g. wrong priority-suffix key, broker mismatch, worker
+           down).  started_at is always NULL in this state, but we do not filter on it
+           so the query is not brittle to future code changes.
+
+        2. PROCESSING, created_at > 15 min ago — worker received the task, set
+           started_at and status=PROCESSING, then crashed before calling _mark_job_failed.
+           Without this clause these jobs remain PROCESSING forever and count against the
+           per-user limit just like QUEUED ones.
         """
-        cutoff = datetime.utcnow() - timedelta(minutes=5)
-        result = await self.db.execute(
+        now = datetime.utcnow()
+        queued_cutoff = now - timedelta(minutes=5)
+        processing_cutoff = now - timedelta(minutes=15)
+
+        stale_result = await self.db.execute(
             select(ProcessingJob).where(
                 ProcessingJob.user_id == user_id,
-                ProcessingJob.status == JobStatus.QUEUED,
-                ProcessingJob.started_at.is_(None),
-                ProcessingJob.created_at < cutoff,
+                or_(
+                    and_(
+                        ProcessingJob.status == JobStatus.QUEUED,
+                        ProcessingJob.created_at < queued_cutoff,
+                    ),
+                    and_(
+                        ProcessingJob.status == JobStatus.PROCESSING,
+                        ProcessingJob.created_at < processing_cutoff,
+                    ),
+                ),
             )
         )
-        stale = result.scalars().all()
-        if stale:
-            for job in stale:
-                job.status = JobStatus.FAILED
-                job.error_message = "Expired: job was queued but never picked up by a worker"
-            await self.db.commit()
-            logger.info(
-                "[SONORO] expired_stale_jobs count=%d user_id=%s", len(stale), user_id
+        stale = stale_result.scalars().all()
+
+        if not stale:
+            return
+
+        queued_count = sum(1 for j in stale if j.status == JobStatus.QUEUED)
+        processing_count = sum(1 for j in stale if j.status == JobStatus.PROCESSING)
+
+        for job in stale:
+            was = job.status.value
+            job.status = JobStatus.FAILED
+            job.completed_at = now
+            job.error_message = (
+                f"Expired: job was {was} for too long without worker activity"
             )
+
+        await self.db.commit()
+        logger.info(
+            "[SONORO] expired_stale_jobs queued=%d processing=%d user_id=%s",
+            queued_count, processing_count, user_id,
+        )
 
     async def _validate_document(self, document_id: UUID, user_id: UUID) -> Document:
         """Validate document exists, belongs to user, and is ready for processing."""
