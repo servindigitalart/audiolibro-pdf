@@ -142,16 +142,18 @@ class ProcessingService:
         # Do NOT pass priority= to apply_async: with Redis broker, Kombu translates
         # a non-zero message priority into a suffixed Redis key (e.g. "normal\x06\x166")
         # that the worker never polls, silently dropping the task.
-        if request.priority <= 3:
+        # Resolve priority safely — client may omit it or send null.
+        priority = int(request.priority or ProcessingConfig.DEFAULT_PRIORITY)
+        if priority <= 3:
             target_queue = "high_priority"
-        elif request.priority >= 8:
+        elif priority >= 8:
             target_queue = "low_priority"
         else:
             target_queue = "normal"
 
         logger.info(
-            "[SONORO] job_created job_id=%s document_id=%s queue=%s priority=%s",
-            job.id, document_id, target_queue, request.priority,
+            "[SONORO] resolved_priority=%s queue=%s job_id=%s document_id=%s",
+            priority, target_queue, job.id, document_id,
         )
 
         # Enqueue Celery task
