@@ -19,6 +19,10 @@ set -euo pipefail
 export PYTHONPATH="${PYTHONPATH:+${PYTHONPATH}:}$(pwd)"
 
 echo "[worker-startup] PYTHONPATH=${PYTHONPATH}"
+# Log the broker URL so Railway logs reveal any API↔worker mismatch.
+# Mask the password portion (anything between :// and @).
+_BROKER_DISPLAY=$(echo "${CELERY_BROKER_URL:-<not set>}" | sed 's|://[^@]*@|://**redacted**@|')
+echo "[worker-startup] CELERY_BROKER_URL=${_BROKER_DISPLAY}"
 echo "[worker-startup] Starting Celery worker..."
 
 exec celery -A app.celery_app worker \

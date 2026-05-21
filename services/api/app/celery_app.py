@@ -21,10 +21,12 @@ logger = logging.getLogger(__name__)
 # CELERY APP CONFIGURATION
 # ============================================
 
+logger.info("[celery_app] broker=%s", settings.celery_broker_url.split("@")[-1])
+
 celery_app = Celery(
     "sonoro_worker",
     broker=settings.celery_broker_url,
-    backend=settings.celery_broker_url,  # Using Redis as result backend
+    backend=settings.celery_result_backend,
     include=["app.tasks.processing"],
 )
 
@@ -62,15 +64,13 @@ celery_app.conf.update(
     task_default_retry_delay=60,  # 1 minute
     task_max_retries=3,
     
-    # Queues configuration
+    # Queues configuration (Redis transport — no AMQP exchanges needed)
     task_queues=(
-        Queue("high_priority", routing_key="high_priority"),
-        Queue("normal", routing_key="normal"),
-        Queue("low_priority", routing_key="low_priority"),
+        Queue("high_priority"),
+        Queue("normal"),
+        Queue("low_priority"),
     ),
     task_default_queue="normal",
-    task_default_exchange="sonoro",
-    task_default_routing_key="normal",
     
     # Monitoring
     task_send_sent_event=True,
@@ -86,22 +86,14 @@ celery_app.conf.update(
 # ============================================
 
 def route_task(name, args, kwargs, options, task=None, **kw):
-    """
-    Route tasks to appropriate queue based on priority.
-    
-    Priority mapping:
-    - 1-3: high_priority
-    - 4-7: normal
-    - 8-10: low_priority
-    """
+    """Route tasks to priority queues. Priority 1-3=high, 4-7=normal, 8-10=low."""
     priority = options.get("priority", 5)
-    
     if priority <= 3:
-        return {"queue": "high_priority", "routing_key": "high_priority"}
+        return {"queue": "high_priority"}
     elif priority >= 8:
-        return {"queue": "low_priority", "routing_key": "low_priority"}
+        return {"queue": "low_priority"}
     else:
-        return {"queue": "normal", "routing_key": "normal"}
+        return {"queue": "normal"}
 
 
 celery_app.conf.task_routes = (route_task,)
