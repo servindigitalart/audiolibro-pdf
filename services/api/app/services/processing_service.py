@@ -120,30 +120,15 @@ class ProcessingService:
         # Parse job type
         job_type = JobType(request.job_type)
         
-        # Create processing job
-        job = ProcessingJob(
-            document_id=document_id,
-            user_id=user.id,
-            job_type=job_type,
-            priority=request.priority,
-            status=JobStatus.QUEUED,
-            progress_percentage=0,
-        )
-        
-        self.db.add(job)
-        
-        # Update document status
-        document.processing_status = ProcessingStatus.QUEUED
-        
-        await self.db.commit()
-        await self.db.refresh(job)
-        
+        # Resolve priority before creating the DB row — client may omit it or send null.
+        # options.get("priority", 5) in route_task also guards against None, but we
+        # must store a valid int in the DB since the column is nullable=False.
+        priority = int(request.priority or ProcessingConfig.DEFAULT_PRIORITY)
+
         # Map priority tier to queue name (mirrors route_task in celery_app.py).
         # Do NOT pass priority= to apply_async: with Redis broker, Kombu translates
         # a non-zero message priority into a suffixed Redis key (e.g. "normal\x06\x166")
         # that the worker never polls, silently dropping the task.
-        # Resolve priority safely — client may omit it or send null.
-        priority = int(request.priority or ProcessingConfig.DEFAULT_PRIORITY)
         if priority <= 3:
             target_queue = "high_priority"
         elif priority >= 8:
@@ -151,9 +136,29 @@ class ProcessingService:
         else:
             target_queue = "normal"
 
+        logger.info("[SONORO] resolved_priority=%s queue=%s", priority, target_queue)
+
+        # Create processing job
+        job = ProcessingJob(
+            document_id=document_id,
+            user_id=user.id,
+            job_type=job_type,
+            priority=priority,
+            status=JobStatus.QUEUED,
+            progress_percentage=0,
+        )
+
+        self.db.add(job)
+
+        # Update document status
+        document.processing_status = ProcessingStatus.QUEUED
+
+        await self.db.commit()
+        await self.db.refresh(job)
+
         logger.info(
-            "[SONORO] resolved_priority=%s queue=%s job_id=%s document_id=%s",
-            priority, target_queue, job.id, document_id,
+            "[SONORO] job_created job_id=%s document_id=%s priority=%s queue=%s",
+            job.id, document_id, priority, target_queue,
         )
 
         # Enqueue Celery task

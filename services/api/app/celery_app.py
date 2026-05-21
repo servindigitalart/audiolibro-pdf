@@ -87,7 +87,9 @@ celery_app.conf.update(
 
 def route_task(name, args, kwargs, options, task=None, **kw):
     """Route tasks to priority queues. Priority 1-3=high, 4-7=normal, 8-10=low."""
-    priority = options.get("priority", 5)
+    # options.get("priority", 5) returns None when the key exists with value None,
+    # so use `or 5` to handle both missing and explicit-None cases.
+    priority = int(options.get("priority") or 5)
     if priority <= 3:
         return {"queue": "high_priority"}
     elif priority >= 8:

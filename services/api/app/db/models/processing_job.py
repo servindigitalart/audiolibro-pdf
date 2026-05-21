@@ -108,6 +108,7 @@ class ProcessingJob(Base):
         Integer,
         nullable=False,
         default=5,
+        server_default="5",
         comment="Job priority (1=highest, 10=lowest)"
     )
 
