@@ -345,6 +345,10 @@ class DocumentService:
         result = await self.db.execute(query)
         documents = result.scalars().all()
         
+        def _status_str(v) -> str:
+            # v is either an enum member (has .value) or a raw string from the DB
+            return v.value if hasattr(v, "value") else str(v)
+
         # Build response
         items = [
             DocumentListItem(
@@ -354,8 +358,8 @@ class DocumentService:
                 file_size_bytes=doc.file_size_bytes,
                 file_size_mb=doc.file_size_mb,
                 mime_type=doc.mime_type,
-                upload_status=doc.upload_status.value,
-                processing_status=doc.processing_status.value,
+                upload_status=_status_str(doc.upload_status),
+                processing_status=_status_str(doc.processing_status),
                 page_count=doc.page_count,
                 language_detected=doc.language_detected,
                 created_at=doc.created_at,

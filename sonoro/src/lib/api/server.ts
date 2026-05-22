@@ -126,8 +126,16 @@ export async function fetchAccountOverview(token: string): Promise<AccountOvervi
 
 export async function fetchDocuments(token: string): Promise<Document[]> {
   // Backend returns a paginated envelope: { documents: [...], total, page, ... }
+  // Trailing slash avoids a FastAPI 307 redirect — Node.js fetch may strip the
+  // Authorization header when following redirects, causing a silent 401.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const raw = await get<any>('/documents', token);
+  let raw: any;
+  try {
+    raw = await get<any>('/documents/', token);
+  } catch (err) {
+    console.error('[SSR] fetchDocuments API call failed:', err instanceof Error ? err.message : err);
+    return [];
+  }
 
   // Tolerate both a plain array (in case the API ever changes) and the paginated envelope
   const items: RawDocument[] = Array.isArray(raw)
@@ -136,8 +144,12 @@ export async function fetchDocuments(token: string): Promise<Document[]> {
     ? raw.documents
     : [];
 
+  console.log(`[SSR] fetchDocuments raw_count=${items.length}`);
+
   try {
-    return items.map(normalizeDocument);
+    const docs = items.map(normalizeDocument);
+    console.log(`[SSR] fetchDocuments normalized_count=${docs.length} statuses=${docs.map(d => d.status).join(',')}`);
+    return docs;
   } catch (err) {
     console.error('[SSR] Failed to normalize documents list:', err);
     return [];

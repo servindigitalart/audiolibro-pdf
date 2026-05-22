@@ -249,6 +249,11 @@ async def list_documents(
                 detail=f"Invalid processing status: {processing_status}"
             )
     
+    logger.info(
+        "[SONORO] library_query user_id=%s page=%d page_size=%d status_filter=%s",
+        current_user.id, page, page_size, status_filter,
+    )
+
     document_service = DocumentService(db)
     result = await document_service.list_documents(
         user=current_user,
@@ -256,16 +261,18 @@ async def list_documents(
         page_size=page_size,
         processing_status=status_filter
     )
-    
+
     logger.info(
-        f"Documents listed",
-        extra={
-            'user_id': str(current_user.id),
-            'page': page,
-            'total': result.total
-        }
+        "[SONORO] library_results user_id=%s count=%d total=%d",
+        current_user.id, len(result.documents), result.total,
     )
-    
+    for doc in result.documents:
+        logger.info(
+            "[SONORO] document_serialized id=%s processing_status=%s upload_status=%s final_audio_path=%s",
+            doc.id, doc.processing_status, doc.upload_status,
+            bool(getattr(doc, 'final_audio_path', None)),
+        )
+
     return result
 
 

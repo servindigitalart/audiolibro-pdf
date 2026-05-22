@@ -9,8 +9,8 @@ const token = (Astro.locals as any).token as string;
 let documents: Document[] = [];
 try {
   documents = await fetchDocuments(token);
-} catch {
-  // handled via empty state in DocumentList
+} catch (err: unknown) {
+  console.error('[SSR /dashboard/documents] fetchDocuments failed:', err instanceof Error ? err.message : err);
 }
 
 const completed  = documents.filter(d => d.status === 'completed').length;
