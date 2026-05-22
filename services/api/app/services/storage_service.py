@@ -103,6 +103,10 @@ class LocalStorageService:
         """Copy from local storage root to a destination path."""
         shutil.copy2(self._full(storage_path), local_path)
 
+    async def download_audio(self, storage_path: str, local_path: str) -> None:
+        """Copy audio from local storage root to a destination path."""
+        shutil.copy2(self._full(storage_path), local_path)
+
     async def get_document_metadata(self, storage_path: str) -> Optional[dict]:
         return {}
 
@@ -308,6 +312,19 @@ class S3StorageService:
             code = exc.response.get("Error", {}).get("Code", "Unknown")
             logger.error(
                 "S3 download failed (code=%s key=%s): %s", code, storage_path, exc
+            )
+            raise
+
+    async def download_audio(self, storage_path: str, local_path: str) -> None:
+        """Download an audio object from S3 to a local file path."""
+        from botocore.exceptions import ClientError
+
+        try:
+            self.client.download_file(self.bucket, storage_path, local_path)
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "Unknown")
+            logger.error(
+                "S3 audio download failed (code=%s key=%s): %s", code, storage_path, exc
             )
             raise
 

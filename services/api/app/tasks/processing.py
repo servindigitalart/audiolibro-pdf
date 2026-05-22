@@ -11,6 +11,7 @@ and audio assembly.
 """
 
 import asyncio
+import io
 import logging
 import os
 import tempfile
@@ -34,6 +35,67 @@ from app.db.models.document import Document, ProcessingStatus
 # the task body surfaces as a task failure rather than a silent startup crash.
 
 logger = logging.getLogger(__name__)
+
+# Google TTS hard limit is 5000 chars per request; stay safely below it.
+_TTS_CHUNK_SIZE = 4500
+
+
+def _chunk_text(text: str, max_chars: int = _TTS_CHUNK_SIZE) -> list:
+    """Split *text* into chunks ≤ max_chars.
+
+    Splitting priority:
+    1. Paragraph boundary (blank line) in the last half of the window
+    2. Sentence-ending punctuation (. ! ?) in the last half of the window
+    3. Hard split at max_chars (last resort)
+    """
+    if len(text) <= max_chars:
+        return [text]
+
+    chunks = []
+    remaining = text.strip()
+
+    while len(remaining) > max_chars:
+        window = remaining[:max_chars]
+
+        pos = window.rfind("\n\n")
+        if pos < max_chars // 4:
+            pos = -1
+
+        if pos == -1:
+            for sep in (". ", "! ", "? ", ".\n", "!\n", "?\n"):
+                candidate = window.rfind(sep)
+                if candidate >= max_chars // 4:
+                    pos = candidate + len(sep)
+                    break
+
+        if pos <= 0:
+            pos = max_chars
+
+        chunks.append(remaining[:pos].strip())
+        remaining = remaining[pos:].strip()
+
+    if remaining:
+        chunks.append(remaining)
+
+    return [c for c in chunks if c]
+
+
+def _concat_mp3_bytes(parts: list) -> bytes:
+    """Concatenate a list of MP3 byte blobs into a single MP3 using pydub."""
+    from pydub import AudioSegment  # deferred — not always installed locally
+
+    if not parts:
+        raise ValueError("_concat_mp3_bytes: no audio parts provided")
+    if len(parts) == 1:
+        return parts[0]
+
+    combined = AudioSegment.from_mp3(io.BytesIO(parts[0]))
+    for part in parts[1:]:
+        combined += AudioSegment.from_mp3(io.BytesIO(part))
+
+    buf = io.BytesIO()
+    combined.export(buf, format="mp3", bitrate="128k")
+    return buf.getvalue()
 
 
 # ============================================
@@ -283,98 +345,94 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
             # Track chapter audio paths for assembly
             chapter_audio_paths = []
             
-            if structure and structure.chapters:
-                # Process each chapter
-                total_chapters = len(structure.chapters)
-                
-                for i, chapter in enumerate(structure.chapters):
-                    logger.info(
-                        f"Processing chapter {i+1}/{total_chapters}: '{chapter.title}'"
-                    )
-                    
-                    # Use chapter text if available, otherwise placeholder
+            chapters_to_process = structure.chapters if (structure and structure.chapters) else []
+            total_chapters = len(chapters_to_process)
+
+            if not chapters_to_process:
+                # Structure engine found no chapters; produce a minimal fallback track
+                # so the pipeline has something to assemble rather than failing silently.
+                logger.warning(
+                    "[SONORO] no_chapters_detected doc_id=%s pages=%s — using fallback text",
+                    document.id, document.page_count,
+                )
+                fallback_text = (
+                    f"{document.original_filename.replace('.pdf', '')}. "
+                    f"This document has {document.page_count or 0} pages."
+                )
+                fallback_chunks = _chunk_text(fallback_text)
+                fallback_parts = []
+                for chunk in fallback_chunks:
+                    fallback_parts.append(await tts_service.synthesize_text(
+                        db=session,
+                        user_id=document.user_id,
+                        text=chunk,
+                        voice_id=settings.google_tts_default_voice,
+                        language_code=settings.google_tts_default_language,
+                    ))
+                fallback_audio = _concat_mp3_bytes(fallback_parts)
+                fallback_path = await storage_service.upload_audio(
+                    audio_data=fallback_audio,
+                    user_id=document.user_id,
+                    document_id=document.id,
+                    filename="chapter_1.mp3",
+                    metadata={"character_count": str(len(fallback_text))},
+                )
+                chapter_audio_paths.append(fallback_path)
+                logger.info("[SONORO] chapter_audio_ready path=%s", fallback_path)
+            else:
+                for i, chapter in enumerate(chapters_to_process):
+                    chapter_label = f"chapter_{i + 1}"
                     chapter_text = chapter.text_content if chapter.text_content else (
-                        f"Chapter {i+1}: {chapter.title}. "
+                        f"Chapter {i + 1}: {chapter.title}. "
                         f"This chapter spans pages {chapter.start_page} to {chapter.end_page}."
                     )
-                    
-                    try:
-                        # Synthesize audio for chapter
-                        audio_bytes = await tts_service.synthesize_text(
+
+                    chunks = _chunk_text(chapter_text)
+                    logger.info(
+                        "[SONORO] tts_chunking chapter_id=%s chunks=%d total_chars=%d",
+                        chapter_label, len(chunks), len(chapter_text),
+                    )
+
+                    # Synthesize each chunk. Any failure propagates immediately and
+                    # marks the job FAILED — no silent skipping of chapters.
+                    chunk_parts = []
+                    for j, chunk in enumerate(chunks):
+                        chunk_audio = await tts_service.synthesize_text(
                             db=session,
                             user_id=document.user_id,
-                            text=chapter_text,
+                            text=chunk,
                             voice_id=settings.google_tts_default_voice,
                             language_code=settings.google_tts_default_language,
                         )
-                        
-                        # Store chapter audio
-                        audio_path = await storage_service.upload_audio(
-                            audio_data=audio_bytes,
-                            user_id=document.user_id,
-                            document_id=document.id,
-                            filename=f"chapter_{i+1}.mp3",
-                            metadata={
-                                "chapter_title": chapter.title,
-                                "chapter_order": str(i),
-                                "character_count": str(len(chapter_text)),
-                            }
-                        )
-                        
-                        # Track path for later assembly
-                        chapter_audio_paths.append(audio_path)
-                        
+                        chunk_parts.append(chunk_audio)
                         logger.info(
-                            f"Chapter {i+1} audio generated and stored: {audio_path}"
+                            "[SONORO] tts_chunk_done index=%d/%d chapter_id=%s",
+                            j + 1, len(chunks), chapter_label,
                         )
-                        
-                    except Exception as e:
-                        logger.error(f"Failed to process chapter {i+1}: {str(e)}")
-                        # Continue with next chapter
-                        continue
-                    
-                    # Update progress
+
+                    chapter_audio = _concat_mp3_bytes(chunk_parts)
+
+                    audio_path = await storage_service.upload_audio(
+                        audio_data=chapter_audio,
+                        user_id=document.user_id,
+                        document_id=document.id,
+                        filename=f"chapter_{i + 1}.mp3",
+                        metadata={
+                            "chapter_title": chapter.title,
+                            "chapter_order": str(i),
+                            "character_count": str(len(chapter_text)),
+                            "chunk_count": str(len(chunks)),
+                        },
+                    )
+                    chapter_audio_paths.append(audio_path)
+                    logger.info(
+                        "[SONORO] chapter_audio_ready chapter_id=%s path=%s",
+                        chapter_label, audio_path,
+                    )
+
                     progress = 30 + int((i + 1) / total_chapters * 60)
                     job.progress_percentage = min(progress, 90)
                     await session.commit()
-                
-            else:
-                # Fallback: Process as single document (BLOCK 6A behavior)
-                logger.warning("No chapter structure, processing as single document")
-                
-                sample_text = f"This is a test audio file for document {document.original_filename}. "
-                sample_text += "This demonstrates the Text-to-Speech integration in Sonoro. "
-                sample_text += f"The document has {document.page_count or 0} pages."
-                
-                try:
-                    audio_bytes = await tts_service.synthesize_text(
-                        db=session,
-                        user_id=document.user_id,
-                        text=sample_text,
-                        voice_id=settings.google_tts_default_voice,
-                        language_code=settings.google_tts_default_language,
-                    )
-                    
-                    audio_path = await storage_service.upload_audio(
-                        audio_data=audio_bytes,
-                        user_id=document.user_id,
-                        document_id=document.id,
-                        filename="full.mp3",
-                        metadata={
-                            "character_count": str(len(sample_text)),
-                            "voice_id": settings.google_tts_default_voice,
-                            "language_code": settings.google_tts_default_language,
-                        }
-                    )
-                    
-                    logger.info(
-                        f"Audio uploaded to storage",
-                        extra={"audio_path": audio_path}
-                    )
-                    
-                except Exception as e:
-                    logger.error(f"Audio processing failed: {str(e)}", exc_info=True)
-                    raise
             
             job.progress_percentage = 90
             await session.commit()
@@ -397,18 +455,18 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
                     with tempfile.TemporaryDirectory() as temp_dir:
                         temp_dir_path = Path(temp_dir)
                         
-                        # Download chapter files from storage
+                        # Download chapter audio from shared object storage.
+                        # API and worker run in separate containers — audio was
+                        # uploaded to S3 by Step 2 and must be fetched here.
                         local_chapter_paths = []
                         for i, remote_path in enumerate(chapter_audio_paths):
-                            local_path = temp_dir_path / f"chapter_{i+1}.mp3"
-                            
-                            # Download from storage
-                            # Note: This assumes storage service provides download method
-                            # In production, implement storage_service.download_audio()
-                            logger.debug(f"Downloading chapter {i+1} from {remote_path}")
-                            # TODO: Implement actual download
-                            # For now, assume files are accessible locally
-                            local_chapter_paths.append(str(local_path))
+                            local_path = str(temp_dir_path / f"chapter_{i + 1}.mp3")
+                            await storage_service.download_audio(remote_path, local_path)
+                            logger.debug(
+                                "[SONORO] chapter_audio_downloaded index=%d path=%s",
+                                i + 1, remote_path,
+                            )
+                            local_chapter_paths.append(local_path)
                         
                         # Assemble chapters
                         assembly_start = time.time()
@@ -555,25 +613,30 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
             # ============================================
             # STEP 7: Mark complete
             # ============================================
-            
+
+            # Refuse to mark success if no final audio was produced — this prevents
+            # the frontend from showing a "ready" state with a broken audio player.
+            if not document.final_audio_path:
+                raise RuntimeError(
+                    "Pipeline finished but final_audio_path was never set. "
+                    "Assembly step may have been skipped (empty chapter_audio_paths)."
+                )
+
             job.status = JobStatus.COMPLETED
             job.progress_percentage = 100
             job.completed_at = datetime.utcnow()
-            
+
             document.processing_status = ProcessingStatus.COMPLETED
             document.processing_completed_at = datetime.utcnow()
-            
+
             await session.commit()
-            
+
             logger.info(
-                f"Processing job completed successfully",
-                extra={
-                    "job_id": str(job_id),
-                    "task_id": task_id,
-                    "final_audio_path": document.final_audio_path,
-                    "duration_seconds": (job.completed_at - job.started_at).total_seconds(),
-                    "chapter_count": structure.chapter_count if structure else 0,
-                }
+                "[SONORO] job_completed job_id=%s audio_path=%s duration_s=%.1f chapters=%d",
+                job_id,
+                document.final_audio_path,
+                (job.completed_at - job.started_at).total_seconds(),
+                structure.chapter_count if structure else 1,
             )
             
         except Exception as e:
@@ -608,13 +671,9 @@ async def _mark_job_failed(job_id: UUID, error_message: str, retry_count: int):
                 
                 await session.commit()
                 
-                logger.info(
-                    f"Job marked as failed",
-                    extra={
-                        "job_id": str(job_id),
-                        "error_message": error_message,
-                        "retry_count": retry_count
-                    }
+                logger.error(
+                    "[SONORO] job_failed job_id=%s retry_count=%d error=%s",
+                    job_id, retry_count, error_message,
                 )
         except Exception as e:
             logger.error(f"Failed to mark job as failed: {str(e)}")
