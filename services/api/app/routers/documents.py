@@ -54,6 +54,7 @@ from app.db.models.processing_job import ProcessingJob as ProcessingJobModel, Jo
 from app.services.document_service import DocumentService
 from app.services.account_service import AccountService
 from app.services.processing_service import ProcessingService
+from app.services.storage_service import get_storage_service
 from app.schemas.processing import ProcessDocumentRequest
 from app.financial.financial_metrics import (
     documents_uploaded_total,
@@ -490,6 +491,84 @@ async def get_document_job(
             "retry_count": job.retry_count,
         },
     }
+
+
+# ============================================
+# CHAPTERS ENDPOINT
+# ============================================
+
+@router.get(
+    "/{document_id}/chapters",
+    summary="Get Document Chapters",
+    description="Return all chapters for a document with presigned audio URLs.",
+)
+async def get_document_chapters(
+    document_id: UUID,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Return chapters with audio URLs; status is derived from audio availability."""
+    from app.db.models.document import Document as DocumentModel
+    from app.db.models.chapter import Chapter as ChapterModel
+
+    doc_result = await db.execute(
+        select(DocumentModel).where(
+            DocumentModel.id == document_id,
+            DocumentModel.user_id == current_user.id,
+        )
+    )
+    doc = doc_result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    chapters_result = await db.execute(
+        select(ChapterModel)
+        .where(ChapterModel.document_id == document_id)
+        .order_by(ChapterModel.order_index)
+    )
+    chapters = chapters_result.scalars().all()
+
+    storage_service = get_storage_service()
+    doc_status = doc.processing_status.value if hasattr(doc.processing_status, "value") else str(doc.processing_status)
+
+    result = []
+    for chapter in chapters:
+        audio_url = None
+        if chapter.audio_url:
+            try:
+                audio_url = await storage_service.generate_audio_url(
+                    storage_path=chapter.audio_url,
+                    expiry_seconds=3600,
+                )
+            except Exception as e:
+                logger.warning(
+                    "[SONORO] chapter_audio_url_failed chapter_id=%s error=%s",
+                    chapter.id, e,
+                )
+
+        if audio_url:
+            ch_status = "completed"
+        elif doc_status in ("processing", "assembling", "finalizing"):
+            ch_status = "processing"
+        elif doc_status == "failed":
+            ch_status = "failed"
+        else:
+            ch_status = "pending"
+
+        result.append({
+            "id": str(chapter.id),
+            "document_id": str(chapter.document_id),
+            "chapter_number": chapter.order_index + 1,
+            "title": chapter.title,
+            "start_page": chapter.start_page,
+            "end_page": chapter.end_page,
+            "confidence_score": chapter.confidence_score,
+            "audio_url": audio_url,
+            "duration_seconds": None,
+            "status": ch_status,
+        })
+
+    return result
 
 
 # ============================================

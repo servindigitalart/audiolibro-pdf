@@ -409,6 +409,26 @@ class DocumentService:
                 detail="Document not found"
             )
         
+        def _status_str(v) -> str:
+            return v.value if hasattr(v, "value") else str(v)
+
+        audio_url = None
+        if document.final_audio_path:
+            try:
+                audio_url = await self.storage.generate_audio_url(
+                    storage_path=document.final_audio_path,
+                    expiry_seconds=3600,
+                )
+                logger.info(
+                    "[SONORO] document_audio_url_generated document_id=%s final_audio_path=%s",
+                    document.id, document.final_audio_path,
+                )
+            except Exception as e:
+                logger.warning(
+                    "[SONORO] document_audio_url_failed document_id=%s error=%s",
+                    document.id, e,
+                )
+
         return DocumentDetail(
             id=document.id,
             user_id=document.user_id,
@@ -419,8 +439,8 @@ class DocumentService:
             mime_type=document.mime_type,
             storage_path=document.storage_path,
             checksum_sha256=document.checksum_sha256,
-            upload_status=document.upload_status.value,
-            processing_status=document.processing_status.value,
+            upload_status=_status_str(document.upload_status),
+            processing_status=_status_str(document.processing_status),
             page_count=document.page_count,
             character_estimate=document.character_estimate,
             language_detected=document.language_detected,
@@ -433,6 +453,9 @@ class DocumentService:
             is_ready_for_processing=document.is_ready_for_processing,
             is_processing_complete=document.is_processing_complete,
             has_failed=document.has_failed,
+            audio_url=audio_url,
+            audio_duration_seconds=document.audio_duration_seconds,
+            audio_file_size_bytes=document.audio_file_size_bytes,
         )
     
     async def generate_download_url(

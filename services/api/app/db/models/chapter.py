@@ -124,6 +124,13 @@ class Chapter(Base):
         comment="First 500 characters for preview"
     )
 
+    # Audio output — S3 key set after TTS assembly for this chapter
+    audio_url = Column(
+        String(1024),
+        nullable=True,
+        comment="S3 storage path for this chapter's assembled audio"
+    )
+
     # Timestamps
     created_at = Column(
         DateTime,

@@ -244,6 +244,7 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
     from app.services.storage_service import get_storage_service
     from app.services.document_structure.engine import DocumentStructureEngine
     from app.services.audio.metadata import AudioMetadataWriter, AudioMetadata
+    from app.db.models.chapter import Chapter as ChapterModel
     from mutagen.mp3 import MP3 as MutagenMP3
     from app.financial.financial_metrics import (
         chapters_detected_total,
@@ -481,6 +482,21 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
                             "[SONORO] chapter_audio_ready chapter_id=%s path=%s",
                             chapter_label, s3_path,
                         )
+
+                        # Persist audio S3 key to Chapter row so the frontend can play it
+                        ch_result = await session.execute(
+                            select(ChapterModel).where(
+                                ChapterModel.document_id == document.id,
+                                ChapterModel.order_index == i,
+                            )
+                        )
+                        db_ch = ch_result.scalar_one_or_none()
+                        if db_ch:
+                            db_ch.audio_url = s3_path
+                            logger.info(
+                                "[SONORO] chapter_audio_path_persisted order=%d chapter_db_id=%s",
+                                i, db_ch.id,
+                            )
 
                         progress = 30 + int((i + 1) / total_chapters * 60)
                         job.progress_percentage = min(progress, 90)

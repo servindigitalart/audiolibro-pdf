@@ -89,6 +89,13 @@ class LocalStorageService:
     ) -> str:
         return f"/api/v1/storage/local/{storage_path}"
 
+    async def generate_audio_url(
+        self,
+        storage_path: str,
+        expiry_seconds: Optional[int] = None,
+    ) -> str:
+        return f"/api/v1/storage/local/{storage_path}"
+
     async def delete_document(self, storage_path: str) -> bool:
         try:
             os.remove(self._full(storage_path))
@@ -291,6 +298,31 @@ class S3StorageService:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to generate download URL",
+            ) from exc
+
+    async def generate_audio_url(
+        self,
+        storage_path: str,
+        expiry_seconds: Optional[int] = None,
+    ) -> str:
+        from botocore.exceptions import ClientError
+
+        expiry = expiry_seconds or self.PRESIGNED_URL_EXPIRY
+        try:
+            return self.client.generate_presigned_url(
+                "get_object",
+                Params={
+                    "Bucket": self.bucket,
+                    "Key": storage_path,
+                    "ResponseContentType": "audio/mpeg",
+                },
+                ExpiresIn=expiry,
+            )
+        except ClientError as exc:
+            logger.error("Failed to generate audio presigned URL: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to generate audio URL",
             ) from exc
 
     async def delete_document(self, storage_path: str) -> bool:

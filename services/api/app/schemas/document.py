@@ -143,6 +143,11 @@ class DocumentDetail(BaseModel):
     processing_started_at: Optional[datetime] = None
     processing_completed_at: Optional[datetime] = None
     
+    # Audio output
+    audio_url: Optional[str] = Field(None, description="Presigned URL for audiobook playback")
+    audio_duration_seconds: Optional[int] = Field(None, description="Total duration in seconds")
+    audio_file_size_bytes: Optional[int] = Field(None, description="Final audiobook file size")
+
     # Computed properties
     is_ready_for_processing: bool = Field(..., description="Ready to be queued")
     is_processing_complete: bool = Field(..., description="Processing finished")

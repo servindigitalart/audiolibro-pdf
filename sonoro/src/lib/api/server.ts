@@ -51,6 +51,13 @@ function normalizeDocument(raw: RawDocument): Document {
   const processingStatus = String(raw.processing_status ?? '');
   const uploadStatus     = String(raw.upload_status ?? '');
   const pageCount        = raw.page_count != null ? Number(raw.page_count) : undefined;
+  const durationSeconds  = raw.audio_duration_seconds != null ? Number(raw.audio_duration_seconds) : undefined;
+
+  const metadataFields = {
+    ...(pageCount != null       ? { pages: pageCount }                : {}),
+    ...(durationSeconds != null ? { duration_seconds: durationSeconds } : {}),
+  };
+  const metadata = Object.keys(metadataFields).length > 0 ? metadataFields : undefined;
 
   return {
     id:           String(raw.id ?? ''),
@@ -64,7 +71,7 @@ function normalizeDocument(raw: RawDocument): Document {
       : undefined,
     error_message: raw.error_message ? String(raw.error_message) : undefined,
     audiobook_url: raw.audio_url ? String(raw.audio_url) : undefined,
-    metadata:      pageCount != null ? { pages: pageCount } : undefined,
+    metadata,
   };
 }
 
