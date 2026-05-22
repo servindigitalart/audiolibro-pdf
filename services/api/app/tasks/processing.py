@@ -11,9 +11,9 @@ and audio assembly.
 """
 
 import asyncio
-import io
 import logging
 import os
+import shutil
 import tempfile
 import time
 from datetime import datetime
@@ -80,22 +80,50 @@ def _chunk_text(text: str, max_chars: int = _TTS_CHUNK_SIZE) -> list:
     return [c for c in chunks if c]
 
 
-def _concat_mp3_bytes(parts: list) -> bytes:
-    """Concatenate a list of MP3 byte blobs into a single MP3 using pydub."""
-    from pydub import AudioSegment  # deferred — not always installed locally
+async def _ffmpeg_concat(input_paths: list, output_path: str) -> int:
+    """Concatenate MP3 files via ffmpeg concat demuxer — no audio data in RAM."""
+    concat_list = output_path + ".txt"
+    with open(concat_list, "w") as fh:
+        for p in input_paths:
+            fh.write(f"file '{p}'\n")
+    logger.info("[SONORO] ffmpeg_concat_list_ready files=%d", len(input_paths))
 
-    if not parts:
-        raise ValueError("_concat_mp3_bytes: no audio parts provided")
-    if len(parts) == 1:
-        return parts[0]
+    async def _run(cmd):
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=3600)
+        except asyncio.TimeoutError:
+            proc.kill()
+            raise RuntimeError("ffmpeg timed out after 3600 seconds")
+        return proc.returncode, stderr.decode(errors="replace")
 
-    combined = AudioSegment.from_mp3(io.BytesIO(parts[0]))
-    for part in parts[1:]:
-        combined += AudioSegment.from_mp3(io.BytesIO(part))
+    cmd_copy = [
+        "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+        "-i", concat_list, "-c", "copy", output_path,
+    ]
+    rc, stderr = await _run(cmd_copy)
+    if rc != 0:
+        logger.warning(
+            "[SONORO] ffmpeg_copy_failed rc=%d stderr=%s — retrying with reencode",
+            rc, stderr[:200],
+        )
+        cmd_encode = [
+            "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+            "-i", concat_list, "-codec:a", "libmp3lame", "-q:a", "4", output_path,
+        ]
+        rc, stderr = await _run(cmd_encode)
+        if rc != 0:
+            raise RuntimeError(f"ffmpeg reencode failed rc={rc}: {stderr[:500]}")
 
-    buf = io.BytesIO()
-    combined.export(buf, format="mp3", bitrate="128k")
-    return buf.getvalue()
+    try:
+        os.unlink(concat_list)
+    except OSError:
+        pass
+    return os.path.getsize(output_path)
 
 
 # ============================================
@@ -215,18 +243,14 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
     from app.services.tts.tts_service import TTSService
     from app.services.storage_service import get_storage_service
     from app.services.document_structure.engine import DocumentStructureEngine
-    from app.services.audio.assembler import AudioAssembler
-    from app.services.audio.normalizer import AudioNormalizer
     from app.services.audio.metadata import AudioMetadataWriter, AudioMetadata
+    from mutagen.mp3 import MP3 as MutagenMP3
     from app.financial.financial_metrics import (
         chapters_detected_total,
         chapter_detection_confidence,
         document_structure_analysis_duration,
-        audio_assembly_duration_seconds,
         audio_file_size_bytes,
         full_audiobook_generated_total,
-        audio_normalization_duration_seconds,
-        audio_metadata_write_duration_seconds,
     )
 
     async with AsyncSessionLocal() as session:
@@ -333,282 +357,204 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
             await session.commit()
             
             # ============================================
-            # STEP 2: Generate TTS for each chapter (BLOCK 6B)
+            # STEPS 2–6: TTS → chapter MP3s → final audiobook
+            # Single temp directory: all audio files stay on disk.
+            # No audio PCM data is loaded into Python memory.
             # ============================================
-            logger.info(f"Step 2: Generating TTS audio for chapters")
+            logger.info("[SONORO] step=2 action=tts_synthesis")
             job.progress_percentage = 30
             await session.commit()
-            
-            tts_service = TTSService()
-            # storage_service already initialized above Step 1
 
-            # Track chapter audio paths for assembly
-            chapter_audio_paths = []
-            
+            tts_service = TTSService()
+            chapter_count = structure.chapter_count if structure else 1
             chapters_to_process = structure.chapters if (structure and structure.chapters) else []
             total_chapters = len(chapters_to_process)
+            chapter_audio_paths = []  # S3 keys (durability / per-chapter playback)
 
-            if not chapters_to_process:
-                # Structure engine found no chapters; produce a minimal fallback track
-                # so the pipeline has something to assemble rather than failing silently.
-                logger.warning(
-                    "[SONORO] no_chapters_detected doc_id=%s pages=%s — using fallback text",
-                    document.id, document.page_count,
-                )
-                fallback_text = (
-                    f"{document.original_filename.replace('.pdf', '')}. "
-                    f"This document has {document.page_count or 0} pages."
-                )
-                fallback_chunks = _chunk_text(fallback_text)
-                fallback_parts = []
-                for chunk in fallback_chunks:
-                    fallback_parts.append(await tts_service.synthesize_text(
-                        db=session,
-                        user_id=document.user_id,
-                        text=chunk,
-                        voice_id=settings.google_tts_default_voice,
-                        language_code=settings.google_tts_default_language,
-                    ))
-                fallback_audio = _concat_mp3_bytes(fallback_parts)
-                fallback_path = await storage_service.upload_audio(
-                    audio_data=fallback_audio,
-                    user_id=document.user_id,
-                    document_id=document.id,
-                    filename="chapter_1.mp3",
-                    metadata={"character_count": str(len(fallback_text))},
-                )
-                chapter_audio_paths.append(fallback_path)
-                logger.info("[SONORO] chapter_audio_ready path=%s", fallback_path)
-            else:
-                for i, chapter in enumerate(chapters_to_process):
-                    chapter_label = f"chapter_{i + 1}"
-                    chapter_text = chapter.text_content if chapter.text_content else (
-                        f"Chapter {i + 1}: {chapter.title}. "
-                        f"This chapter spans pages {chapter.start_page} to {chapter.end_page}."
+            with tempfile.TemporaryDirectory(prefix=f"sonoro_{job_id}_") as _tmp:
+                tmp = Path(_tmp)
+                local_chapter_paths = []  # local disk paths reused for final assembly
+
+                # ---- TTS synthesis ----
+                if not chapters_to_process:
+                    logger.warning(
+                        "[SONORO] no_chapters_detected doc_id=%s — using fallback text",
+                        document.id,
                     )
-
-                    chunks = _chunk_text(chapter_text)
-                    logger.info(
-                        "[SONORO] tts_chunking chapter_id=%s chunks=%d total_chars=%d",
-                        chapter_label, len(chunks), len(chapter_text),
+                    fallback_text = (
+                        f"{document.original_filename.replace('.pdf', '')}. "
+                        f"This document has {document.page_count or 0} pages."
                     )
-
-                    # Synthesize each chunk. Any failure propagates immediately and
-                    # marks the job FAILED — no silent skipping of chapters.
-                    chunk_parts = []
+                    chunks = _chunk_text(fallback_text)
+                    chunk_paths = []
                     for j, chunk in enumerate(chunks):
-                        chunk_audio = await tts_service.synthesize_text(
+                        audio_bytes = await tts_service.synthesize_text(
                             db=session,
                             user_id=document.user_id,
                             text=chunk,
                             voice_id=settings.google_tts_default_voice,
                             language_code=settings.google_tts_default_language,
                         )
-                        chunk_parts.append(chunk_audio)
-                        logger.info(
-                            "[SONORO] tts_chunk_done index=%d/%d chapter_id=%s",
-                            j + 1, len(chunks), chapter_label,
-                        )
+                        p = str(tmp / f"ch1_chunk{j + 1}.mp3")
+                        with open(p, "wb") as fh:
+                            fh.write(audio_bytes)
+                        chunk_paths.append(p)
 
-                    chapter_audio = _concat_mp3_bytes(chunk_parts)
+                    chapter_path = str(tmp / "chapter_1.mp3")
+                    if len(chunk_paths) == 1:
+                        shutil.copy2(chunk_paths[0], chapter_path)
+                    else:
+                        await _ffmpeg_concat(chunk_paths, chapter_path)
+                    for cp in chunk_paths:
+                        try:
+                            os.unlink(cp)
+                        except OSError:
+                            pass
 
-                    audio_path = await storage_service.upload_audio(
-                        audio_data=chapter_audio,
+                    s3_path = await storage_service.upload_audio_file(
+                        file_path=chapter_path,
                         user_id=document.user_id,
                         document_id=document.id,
-                        filename=f"chapter_{i + 1}.mp3",
-                        metadata={
-                            "chapter_title": chapter.title,
-                            "chapter_order": str(i),
-                            "character_count": str(len(chapter_text)),
-                            "chunk_count": str(len(chunks)),
-                        },
+                        filename="chapter_1.mp3",
+                        metadata={"character_count": str(len(fallback_text))},
                     )
-                    chapter_audio_paths.append(audio_path)
-                    logger.info(
-                        "[SONORO] chapter_audio_ready chapter_id=%s path=%s",
-                        chapter_label, audio_path,
-                    )
+                    chapter_audio_paths.append(s3_path)
+                    local_chapter_paths.append(chapter_path)
+                    logger.info("[SONORO] chapter_audio_ready path=%s", s3_path)
+                else:
+                    for i, chapter in enumerate(chapters_to_process):
+                        chapter_label = f"chapter_{i + 1}"
+                        chapter_text = chapter.text_content if chapter.text_content else (
+                            f"Chapter {i + 1}: {chapter.title}. "
+                            f"This chapter spans pages {chapter.start_page} to {chapter.end_page}."
+                        )
+                        chunks = _chunk_text(chapter_text)
+                        logger.info(
+                            "[SONORO] tts_chunking chapter_id=%s chunks=%d total_chars=%d",
+                            chapter_label, len(chunks), len(chapter_text),
+                        )
 
-                    progress = 30 + int((i + 1) / total_chapters * 60)
-                    job.progress_percentage = min(progress, 90)
-                    await session.commit()
-            
-            job.progress_percentage = 90
-            await session.commit()
-            
-            # ============================================
-            # STEP 3: Audio Assembly (BLOCK 6C)
-            # ============================================
-            if chapter_audio_paths:
+                        chunk_paths = []
+                        for j, chunk in enumerate(chunks):
+                            audio_bytes = await tts_service.synthesize_text(
+                                db=session,
+                                user_id=document.user_id,
+                                text=chunk,
+                                voice_id=settings.google_tts_default_voice,
+                                language_code=settings.google_tts_default_language,
+                            )
+                            p = str(tmp / f"ch{i + 1}_chunk{j + 1}.mp3")
+                            with open(p, "wb") as fh:
+                                fh.write(audio_bytes)
+                            chunk_paths.append(p)
+                            logger.info(
+                                "[SONORO] tts_chunk_done index=%d/%d chapter_id=%s",
+                                j + 1, len(chunks), chapter_label,
+                            )
+
+                        chapter_path = str(tmp / f"chapter_{i + 1}.mp3")
+                        if len(chunk_paths) == 1:
+                            shutil.copy2(chunk_paths[0], chapter_path)
+                        else:
+                            await _ffmpeg_concat(chunk_paths, chapter_path)
+                        for cp in chunk_paths:
+                            try:
+                                os.unlink(cp)
+                            except OSError:
+                                pass
+
+                        s3_path = await storage_service.upload_audio_file(
+                            file_path=chapter_path,
+                            user_id=document.user_id,
+                            document_id=document.id,
+                            filename=f"chapter_{i + 1}.mp3",
+                            metadata={
+                                "chapter_title": chapter.title,
+                                "chapter_order": str(i),
+                                "character_count": str(len(chapter_text)),
+                                "chunk_count": str(len(chunks)),
+                            },
+                        )
+                        chapter_audio_paths.append(s3_path)
+                        local_chapter_paths.append(chapter_path)
+                        logger.info(
+                            "[SONORO] chapter_audio_ready chapter_id=%s path=%s",
+                            chapter_label, s3_path,
+                        )
+
+                        progress = 30 + int((i + 1) / total_chapters * 60)
+                        job.progress_percentage = min(progress, 90)
+                        await session.commit()
+
+                job.progress_percentage = 90
+                await session.commit()
+
+                # ---- Final assembly (ffmpeg concat demuxer — zero PCM in RAM) ----
                 logger.info(
-                    f"Step 3: Assembling {len(chapter_audio_paths)} chapter audio files"
+                    "[SONORO] final_assembly_start chapters=%d", len(local_chapter_paths)
                 )
-                
-                # Update status to ASSEMBLING
                 document.processing_status = ProcessingStatus.ASSEMBLING
                 job.progress_percentage = 91
                 await session.commit()
-                
-                try:
-                    # Create temporary directory for assembly
-                    with tempfile.TemporaryDirectory() as temp_dir:
-                        temp_dir_path = Path(temp_dir)
-                        
-                        # Download chapter audio from shared object storage.
-                        # API and worker run in separate containers — audio was
-                        # uploaded to S3 by Step 2 and must be fetched here.
-                        local_chapter_paths = []
-                        for i, remote_path in enumerate(chapter_audio_paths):
-                            local_path = str(temp_dir_path / f"chapter_{i + 1}.mp3")
-                            await storage_service.download_audio(remote_path, local_path)
-                            logger.debug(
-                                "[SONORO] chapter_audio_downloaded index=%d path=%s",
-                                i + 1, remote_path,
-                            )
-                            local_chapter_paths.append(local_path)
-                        
-                        # Assemble chapters
-                        assembly_start = time.time()
-                        
-                        assembler = AudioAssembler(target_bitrate=128)
-                        output_path = temp_dir_path / "audiobook_assembled.mp3"
-                        
-                        assembled_path, assembly_metrics = await assembler.assemble_chapters(
-                            chapter_paths=local_chapter_paths,
-                            output_path=str(output_path),
-                        )
-                        
-                        assembly_duration = time.time() - assembly_start
-                        audio_assembly_duration_seconds.observe(assembly_duration)
-                        
-                        logger.info(
-                            f"Audio assembly complete",
-                            extra={
-                                "duration_seconds": assembly_metrics.duration_seconds,
-                                "file_size_mb": assembly_metrics.file_size_bytes / (1024 * 1024),
-                                "chapter_count": assembly_metrics.chapter_count,
-                            }
-                        )
-                        
-                        job.progress_percentage = 93
-                        await session.commit()
-                        
-                        # ============================================
-                        # STEP 4: Audio Normalization (BLOCK 6C)
-                        # ============================================
-                        logger.info("Step 4: Normalizing audio")
-                        
-                        document.processing_status = ProcessingStatus.FINALIZING
-                        job.progress_percentage = 94
-                        await session.commit()
-                        
-                        normalization_start = time.time()
-                        
-                        normalizer = AudioNormalizer(target_dbfs=-20.0)
-                        normalized_path = temp_dir_path / "audiobook_normalized.mp3"
-                        
-                        normalized_path_str, norm_metrics = await normalizer.normalize(
-                            input_path=assembled_path,
-                            output_path=str(normalized_path),
-                            trim_silence=True,
-                        )
-                        
-                        normalization_duration = time.time() - normalization_start
-                        audio_normalization_duration_seconds.observe(normalization_duration)
-                        
-                        logger.info(
-                            f"Audio normalization complete",
-                            extra={
-                                "original_dbfs": norm_metrics.original_dbfs,
-                                "normalized_dbfs": norm_metrics.normalized_dbfs,
-                                "trim_start_ms": norm_metrics.trim_start_ms,
-                                "trim_end_ms": norm_metrics.trim_end_ms,
-                            }
-                        )
-                        
-                        job.progress_percentage = 96
-                        await session.commit()
-                        
-                        # ============================================
-                        # STEP 5: Add Metadata (BLOCK 6C)
-                        # ============================================
-                        logger.info("Step 5: Adding metadata tags")
-                        
-                        metadata_start = time.time()
-                        
-                        metadata_writer = AudioMetadataWriter()
-                        metadata = AudioMetadata(
-                            title=document.original_filename.replace(".pdf", ""),
-                            author="Unknown Author",  # TODO: Extract from document
-                            language=document.language_detected or "en",
-                            processing_date=datetime.utcnow(),
-                            comment=f"Generated by Sonoro - {structure.chapter_count} chapters",
-                        )
-                        
-                        final_path = temp_dir_path / "audiobook_final.mp3"
-                        
-                        # Copy normalized to final
-                        import shutil
-                        shutil.copy2(normalized_path_str, str(final_path))
-                        
-                        # Write metadata
-                        await metadata_writer.write_metadata(
-                            audio_path=str(final_path),
-                            metadata=metadata,
-                        )
-                        
-                        metadata_duration = time.time() - metadata_start
-                        audio_metadata_write_duration_seconds.observe(metadata_duration)
-                        
-                        logger.info("Metadata tags written successfully")
-                        
-                        job.progress_percentage = 98
-                        await session.commit()
-                        
-                        # ============================================
-                        # STEP 6: Upload Final Audiobook
-                        # ============================================
-                        logger.info("Step 6: Uploading final audiobook")
-                        
-                        # Upload final audiobook
-                        with open(final_path, "rb") as f:
-                            final_audio_data = f.read()
-                        
-                        final_audio_path = await storage_service.upload_audio(
-                            audio_data=final_audio_data,
-                            user_id=document.user_id,
-                            document_id=document.id,
-                            filename="audiobook.mp3",
-                            metadata={
-                                "chapter_count": str(structure.chapter_count),
-                                "duration_seconds": str(int(assembly_metrics.duration_seconds)),
-                                "file_size_bytes": str(assembly_metrics.file_size_bytes),
-                                "bitrate_kbps": str(assembly_metrics.bitrate_kbps),
-                            }
-                        )
-                        
-                        # Update document with final audio info
-                        document.final_audio_path = final_audio_path
-                        document.audio_duration_seconds = int(assembly_metrics.duration_seconds)
-                        document.audio_file_size_bytes = assembly_metrics.file_size_bytes
-                        
-                        # Emit metrics
-                        audio_file_size_bytes.observe(assembly_metrics.file_size_bytes)
-                        full_audiobook_generated_total.inc()
-                        
-                        logger.info(
-                            f"Final audiobook uploaded",
-                            extra={
-                                "path": final_audio_path,
-                                "duration_seconds": document.audio_duration_seconds,
-                                "file_size_mb": document.audio_file_size_bytes / (1024 * 1024),
-                            }
-                        )
-                        
-                except Exception as e:
-                    logger.error(f"Audio assembly failed: {str(e)}", exc_info=True)
-                    raise
+
+                assembled_path = str(tmp / "audiobook_assembled.mp3")
+                if len(local_chapter_paths) == 1:
+                    shutil.copy2(local_chapter_paths[0], assembled_path)
+                else:
+                    await _ffmpeg_concat(local_chapter_paths, assembled_path)
+                logger.info("[SONORO] final_assembly_ffmpeg_done")
+
+                job.progress_percentage = 94
+                await session.commit()
+
+                # ---- Metadata (mutagen reads ID3 only — no PCM load) ----
+                document.processing_status = ProcessingStatus.FINALIZING
+                metadata_writer = AudioMetadataWriter()
+                meta = AudioMetadata(
+                    title=document.original_filename.replace(".pdf", ""),
+                    author="Unknown Author",
+                    language=document.language_detected or "en",
+                    processing_date=datetime.utcnow(),
+                    comment=f"Generated by Sonoro - {chapter_count} chapters",
+                )
+                await metadata_writer.write_metadata(audio_path=assembled_path, metadata=meta)
+
+                job.progress_percentage = 96
+                await session.commit()
+
+                # ---- Upload from disk (boto3 upload_file streams — no in-memory read) ----
+                final_size = os.path.getsize(assembled_path)
+                duration_s = int(MutagenMP3(assembled_path).info.length)
+
+                logger.info(
+                    "[SONORO] final_audio_upload_start size_bytes=%d duration_s=%d",
+                    final_size, duration_s,
+                )
+                final_audio_path = await storage_service.upload_audio_file(
+                    file_path=assembled_path,
+                    user_id=document.user_id,
+                    document_id=document.id,
+                    filename="audiobook.mp3",
+                    metadata={
+                        "chapter_count": str(chapter_count),
+                        "duration_seconds": str(duration_s),
+                        "file_size_bytes": str(final_size),
+                    },
+                )
+                logger.info(
+                    "[SONORO] final_audio_uploaded path=%s size_bytes=%d duration_s=%d",
+                    final_audio_path, final_size, duration_s,
+                )
+
+                document.final_audio_path = final_audio_path
+                document.audio_duration_seconds = duration_s
+                document.audio_file_size_bytes = final_size
+
+                audio_file_size_bytes.observe(final_size)
+                full_audiobook_generated_total.inc()
+
+                job.progress_percentage = 98
+                await session.commit()
             
             # ============================================
             # STEP 7: Mark complete

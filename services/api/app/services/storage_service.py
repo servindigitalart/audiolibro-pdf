@@ -125,6 +125,20 @@ class LocalStorageService:
             fh.write(audio_data)
         return storage_path
 
+    async def upload_audio_file(
+        self,
+        file_path: str,
+        user_id: UUID,
+        document_id: UUID,
+        filename: str = "full.mp3",
+        metadata: Optional[dict] = None,
+    ) -> str:
+        storage_path = _storage_path_for_audio(user_id, document_id, filename)
+        full = self._full(storage_path)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        shutil.copy2(file_path, full)
+        return storage_path
+
 
 # ── S3-compatible backend ─────────────────────────────────────────────────────
 
@@ -369,6 +383,50 @@ class S3StorageService:
             code = exc.response.get("Error", {}).get("Code", "Unknown")
             logger.error(
                 "S3 audio upload failed (code=%s): %s",
+                code,
+                exc,
+                extra={"user_id": str(user_id), "document_id": str(document_id)},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to upload audio to storage",
+            ) from exc
+
+    async def upload_audio_file(
+        self,
+        file_path: str,
+        user_id: UUID,
+        document_id: UUID,
+        filename: str = "full.mp3",
+        metadata: Optional[dict] = None,
+    ) -> str:
+        """Upload an audio file from a local path to S3, streaming from disk."""
+        from botocore.exceptions import ClientError
+
+        storage_path = _storage_path_for_audio(user_id, document_id, filename)
+        upload_metadata: dict[str, str] = {
+            "user-id": str(user_id),
+            "document-id": str(document_id),
+            "upload-timestamp": datetime.utcnow().isoformat(),
+        }
+        if metadata:
+            upload_metadata.update(metadata)
+
+        try:
+            self.client.upload_file(
+                file_path,
+                self.bucket,
+                storage_path,
+                ExtraArgs={
+                    "ContentType": "audio/mpeg",
+                    "Metadata": upload_metadata,
+                },
+            )
+            return storage_path
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "Unknown")
+            logger.error(
+                "S3 audio file upload failed (code=%s): %s",
                 code,
                 exc,
                 extra={"user_id": str(user_id), "document_id": str(document_id)},
