@@ -53,14 +53,20 @@ class CostEvent(Base):
     )
     
     # Event Details
+    #
+    # native_enum=False + values_callable: same fix as migrations 012 and 014.
+    # asyncpg sends enum member .name ("TTS_CHARACTERS") through the native codec
+    # instead of .value ("tts_characters"), causing InvalidTextRepresentationError.
+    # Storing as VARCHAR(50) bypasses the native codec entirely.
+    # Migration 016 converts both columns from PostgreSQL ENUM to VARCHAR(50).
     event_type = Column(
-        SQLEnum(CostEventType),
+        SQLEnum(CostEventType, native_enum=False, values_callable=lambda obj: [e.value for e in obj]),
         nullable=False,
         index=True,
     )
-    
+
     provider = Column(
-        SQLEnum(CostProvider),
+        SQLEnum(CostProvider, native_enum=False, values_callable=lambda obj: [e.value for e in obj]),
         nullable=True,
         default=CostProvider.INTERNAL,
     )
