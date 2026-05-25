@@ -89,7 +89,7 @@ async def _ffmpeg_concat(input_paths: list, output_path: str) -> int:
     with open(concat_list, "w") as fh:
         for p in input_paths:
             fh.write(f"file '{p}'\n")
-    logger.info("[SONORO] ffmpeg_concat_list_ready", files=len(input_paths))
+    logger.info("[SONORO] ffmpeg_concat_list_ready files=%d", len(input_paths))
 
     async def _run(cmd):
         proc = await asyncio.create_subprocess_exec(
@@ -111,8 +111,8 @@ async def _ffmpeg_concat(input_paths: list, output_path: str) -> int:
     rc, stderr = await _run(cmd_copy)
     if rc != 0:
         logger.warning(
-            "[SONORO] ffmpeg_copy_failed — retrying with reencode",
-            rc=rc, stderr=stderr[:200],
+            "[SONORO] ffmpeg_copy_failed rc=%d stderr=%s — retrying with reencode",
+            rc, stderr[:200],
         )
         cmd_encode = [
             "ffmpeg", "-y", "-f", "concat", "-safe", "0",
@@ -208,9 +208,8 @@ def process_document_job(self, job_id: str):
     job_uuid = UUID(job_id)
 
     logger.info(
-        "[SONORO] worker_task_received",
-        task="process_document_job", job_id=job_id,
-        task_id=self.request.id, retry=self.request.retries,
+        "[SONORO] worker_task_received job_id=%s task_id=%s retry=%s",
+        job_id, self.request.id, self.request.retries,
     )
     
     try:
@@ -221,7 +220,7 @@ def process_document_job(self, job_id: str):
         # Quota exhaustion is permanent until the next billing period — mark
         # the job as failed immediately without triggering a Celery retry.
         logger.warning(
-            "[SONORO] quota_exhausted_no_retry", job_id=job_id, error=str(e)
+            "[SONORO] quota_exhausted_no_retry job_id=%s error=%s", job_id, str(e)
         )
         asyncio.run(_mark_job_failed(job_uuid, str(e), self.request.retries))
         # Do NOT re-raise: no retry on quota failure.
@@ -332,8 +331,8 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
             pdf_path = f"/tmp/sonoro_{document.id}.pdf"
             await storage_service.download_document(document.storage_path, pdf_path)
             logger.info(
-                "[SONORO] pdf_downloaded",
-                storage_path=document.storage_path, local_path=pdf_path,
+                "[SONORO] pdf_downloaded storage_path=%s local_path=%s",
+                document.storage_path, pdf_path,
             )
 
             structure_start = time.time()
@@ -396,7 +395,7 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
                             if len(_lang_sample) >= 3000:
                                 break
                 except Exception as _e:
-                    logger.warning("[SONORO] lang_sample_pdf_extract_failed", error=str(_e))
+                    logger.warning("[SONORO] lang_sample_pdf_extract_failed error=%s", _e)
 
             lang_result = detect_language(_lang_sample, document_id=str(document.id))
 
@@ -450,8 +449,8 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
                 # ---- TTS synthesis ----
                 if not chapters_to_process:
                     logger.warning(
-                        "[SONORO] no_chapters_detected — using fallback text",
-                        doc_id=str(document.id),
+                        "[SONORO] no_chapters_detected doc_id=%s — using fallback text",
+                        document.id,
                     )
                     fallback_text = (
                         f"{document.original_filename.replace('.pdf', '')}. "
@@ -493,7 +492,7 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
                     )
                     chapter_audio_paths.append(s3_path)
                     local_chapter_paths.append(chapter_path)
-                    logger.info("[SONORO] chapter_audio_ready", path=s3_path)
+                    logger.info("[SONORO] chapter_audio_ready path=%s", s3_path)
                 else:
                     for i, chapter in enumerate(chapters_to_process):
                         chapter_label = f"chapter_{i + 1}"
@@ -503,8 +502,8 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
                         )
                         chunks = _chunk_text(chapter_text)
                         logger.info(
-                            "[SONORO] tts_chunking",
-                            chapter_id=chapter_label, chunks=len(chunks), total_chars=len(chapter_text),
+                            "[SONORO] tts_chunking chapter_id=%s chunks=%d total_chars=%d",
+                            chapter_label, len(chunks), len(chapter_text),
                         )
 
                         chunk_paths = []
@@ -522,8 +521,8 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
                                 fh.write(audio_bytes)
                             chunk_paths.append(p)
                             logger.info(
-                                "[SONORO] tts_chunk_done",
-                                index=j + 1, total=len(chunks), chapter_id=chapter_label,
+                                "[SONORO] tts_chunk_done index=%d/%d chapter_id=%s",
+                                j + 1, len(chunks), chapter_label,
                             )
 
                         chapter_path = str(tmp / f"chapter_{i + 1}.mp3")
@@ -552,8 +551,8 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
                         chapter_audio_paths.append(s3_path)
                         local_chapter_paths.append(chapter_path)
                         logger.info(
-                            "[SONORO] chapter_audio_ready",
-                            chapter_id=chapter_label, path=s3_path,
+                            "[SONORO] chapter_audio_ready chapter_id=%s path=%s",
+                            chapter_label, s3_path,
                         )
 
                         # Persist audio S3 key to Chapter row so the frontend can play it
@@ -567,8 +566,8 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
                         if db_ch:
                             db_ch.audio_url = s3_path
                             logger.info(
-                                "[SONORO] chapter_audio_path_persisted",
-                                order=i, chapter_db_id=str(db_ch.id),
+                                "[SONORO] chapter_audio_path_persisted order=%d chapter_db_id=%s",
+                                i, db_ch.id,
                             )
 
                         progress = 30 + int((i + 1) / total_chapters * 60)
@@ -580,7 +579,7 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
 
                 # ---- Final assembly (ffmpeg concat demuxer — zero PCM in RAM) ----
                 logger.info(
-                    "[SONORO] final_assembly_start", chapters=len(local_chapter_paths)
+                    "[SONORO] final_assembly_start chapters=%d", len(local_chapter_paths)
                 )
                 document.processing_status = ProcessingStatus.ASSEMBLING
                 job.progress_percentage = 91
@@ -616,7 +615,8 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
                 duration_s = int(MutagenMP3(assembled_path).info.length)
 
                 logger.info(
-                    "[SONORO] final_audio_upload_start", size_bytes=final_size, duration_s=duration_s,
+                    "[SONORO] final_audio_upload_start size_bytes=%d duration_s=%d",
+                    final_size, duration_s,
                 )
                 final_audio_path = await storage_service.upload_audio_file(
                     file_path=assembled_path,
@@ -630,8 +630,8 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
                     },
                 )
                 logger.info(
-                    "[SONORO] final_audio_uploaded",
-                    path=final_audio_path, size_bytes=final_size, duration_s=duration_s,
+                    "[SONORO] final_audio_uploaded path=%s size_bytes=%d duration_s=%d",
+                    final_audio_path, final_size, duration_s,
                 )
 
                 document.final_audio_path = final_audio_path
@@ -667,8 +667,8 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
                     amount=_chars_synthesized,
                 )
                 logger.info(
-                    "[SONORO] quota_consumed",
-                    user_id=str(document.user_id), chars=_chars_synthesized, document_id=str(document.id),
+                    "[SONORO] quota_consumed user_id=%s chars=%d document_id=%s",
+                    document.user_id, _chars_synthesized, document.id,
                 )
 
             job.status = JobStatus.COMPLETED
@@ -681,11 +681,11 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
             await session.commit()
 
             logger.info(
-                "[SONORO] job_completed",
-                job_id=job_id,
-                audio_path=document.final_audio_path,
-                duration_s=round((job.completed_at - job.started_at).total_seconds(), 1),
-                chapters=structure.chapter_count if structure else 1,
+                "[SONORO] job_completed job_id=%s audio_path=%s duration_s=%.1f chapters=%d",
+                job_id,
+                document.final_audio_path,
+                (job.completed_at - job.started_at).total_seconds(),
+                structure.chapter_count if structure else 1,
             )
             
         except Exception as e:
@@ -721,8 +721,8 @@ async def _mark_job_failed(job_id: UUID, error_message: str, retry_count: int):
                 await session.commit()
                 
                 logger.error(
-                    "[SONORO] job_failed",
-                    job_id=str(job_id), retry_count=retry_count, error=error_message,
+                    "[SONORO] job_failed job_id=%s retry_count=%d error=%s",
+                    job_id, retry_count, error_message,
                 )
         except Exception as e:
             logger.error(f"Failed to mark job as failed: {str(e)}")

@@ -119,15 +119,9 @@ def task_postrun_handler(sender=None, task_id=None, task=None, args=None, kwargs
 def task_failure_handler(sender=None, task_id=None, exception=None, args=None, kwargs=None, traceback=None, einfo=None, **extra):
     """Log task failure."""
     logger.error(
-        f"Task failed: {sender.name}",
-        extra={
-            "task_id": task_id,
-            "task_name": sender.name,
-            "exception": str(exception),
-            "args": args,
-            "kwargs": kwargs
-        },
-        exc_info=einfo
+        "Task failed: %s task_id=%s exception=%s",
+        sender.name, task_id, exception,
+        exc_info=einfo,
     )
 
 
