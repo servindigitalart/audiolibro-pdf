@@ -36,9 +36,13 @@ class ConfidenceScorer:
     # Method priority (higher = more trusted)
     METHOD_PRIORITY = {
         'toc': 3,
-        'heuristic': 2,
+        'heuristic': 2,        # legacy method name
+        'chapter_keyword': 2,  # keyword-matched (Chapter, Capítulo, etc.)
+        'roman_numeral': 2,    # standalone Roman numeral heading
         'structural': 1,
-        'manual': 4,  # Manual overrides (future)
+        'length_fallback': 0,
+        'fallback': 0,
+        'manual': 4,           # manual overrides (future)
     }
     
     def fuse_detections(

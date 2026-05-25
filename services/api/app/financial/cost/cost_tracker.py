@@ -2,17 +2,20 @@
 Cost Tracker Service
 ====================
 Service for tracking and reporting cost events.
+
+All queries use SQLAlchemy 2.0 Core-style select() — the legacy
+db.query() API does not exist on AsyncSession.
 """
 
 from datetime import datetime, timedelta
-from typing import Dict, Optional, List
+from typing import Dict, List, Optional
 from uuid import UUID
 
-from sqlalchemy import func, and_
+from sqlalchemy import func, and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import get_logger
-from app.financial.cost.cost_models import CostEvent, UsageQuota
+from app.financial.cost.cost_models import CostEvent
 from app.financial.cost.cost_enums import CostEventType, CostProvider
 
 logger = get_logger(__name__)
@@ -20,15 +23,14 @@ logger = get_logger(__name__)
 
 class CostTracker:
     """
-    Service for tracking cost events and calculating costs.
-    
-    This provides the foundation for:
-    - Real-time cost visibility
-    - Budget alerts
-    - Usage-based billing (future)
-    - Cost optimization
+    Track cost events and produce financial reports.
+
+    CostEvent rows are the source of truth for spend; UsageQuota rows are
+    the source of truth for the user-facing quota counter.  These are
+    intentionally separate so reporting (cost_tracker) and enforcement
+    (quota_service) remain decoupled.
     """
-    
+
     @staticmethod
     async def track_event(
         db: AsyncSession,
@@ -40,22 +42,12 @@ class CostTracker:
         metadata: Optional[Dict] = None,
     ) -> CostEvent:
         """
-        Track a cost event.
-        
-        Args:
-            db: Database session
-            user_id: User who generated the cost
-            event_type: Type of cost event
-            quantity: Number of units (characters, API calls, etc.)
-            unit_cost: Cost per unit in USD
-            provider: External provider (if applicable)
-            metadata: Additional context
-        
-        Returns:
-            Created CostEvent
+        Persist a cost event row.
+
+        This is the only write path — all other methods are read-only reports.
         """
         total_cost = quantity * unit_cost
-        
+
         event = CostEvent(
             user_id=user_id,
             event_type=event_type,
@@ -63,257 +55,150 @@ class CostTracker:
             quantity=quantity,
             unit_cost=unit_cost,
             total_cost=total_cost,
-            metadata=metadata or {},
+            activity_metadata=metadata or {},
         )
-        
+
         db.add(event)
         await db.commit()
         await db.refresh(event)
-        
+
         logger.info(
-            f"Cost event tracked: user={user_id}, "
-            f"type={event_type}, "
-            f"quantity={quantity}, "
-            f"cost=${total_cost:.4f}"
+            "Cost event tracked: user=%s type=%s quantity=%s cost=$%.4f",
+            user_id, event_type, quantity, total_cost,
         )
-        
         return event
-    
-    @staticmethod
-    async def track_estimate(
-        db: AsyncSession,
-        user_id: UUID,
-        event_type: CostEventType,
-        quantity: float,
-        unit_cost: float,
-    ) -> float:
-        """
-        Calculate estimated cost without tracking.
-        
-        Useful for:
-        - Pre-flight cost checks
-        - Quote generation
-        - Budget warnings
-        
-        Args:
-            db: Database session
-            user_id: User requesting estimate
-            event_type: Type of operation
-            quantity: Number of units
-            unit_cost: Cost per unit
-        
-        Returns:
-            Estimated cost in USD
-        """
-        estimated_cost = quantity * unit_cost
-        
-        logger.debug(
-            f"Cost estimate: user={user_id}, "
-            f"type={event_type}, "
-            f"quantity={quantity}, "
-            f"estimated=${estimated_cost:.4f}"
-        )
-        
-        return estimated_cost
-    
+
     @staticmethod
     async def get_user_monthly_cost(
         db: AsyncSession,
         user_id: UUID,
         month: Optional[datetime] = None,
     ) -> Dict:
-        """
-        Get total cost for a user in a given month.
-        
-        Args:
-            db: Database session
-            user_id: User ID
-            month: Month to query (defaults to current month)
-        
-        Returns:
-            Dict with total cost and breakdown by event type
-        """
+        """Total cost for *user_id* in *month* (defaults to current month)."""
         if month is None:
             month = datetime.utcnow()
-        
-        # Calculate month boundaries
+
         month_start = month.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        
         if month.month == 12:
             month_end = month_start.replace(year=month.year + 1, month=1)
         else:
             month_end = month_start.replace(month=month.month + 1)
-        
-        # Query total cost
+
+        where = and_(
+            CostEvent.user_id == user_id,
+            CostEvent.created_at >= month_start,
+            CostEvent.created_at < month_end,
+        )
+
+        # Total cost
         total_result = await db.execute(
-            func.sum(CostEvent.total_cost).filter(
-                and_(
-                    CostEvent.user_id == user_id,
-                    CostEvent.created_at >= month_start,
-                    CostEvent.created_at < month_end,
-                )
-            )
+            select(func.sum(CostEvent.total_cost)).where(where)
         )
         total_cost = total_result.scalar() or 0.0
-        
-        # Query breakdown by event type
+
+        # Breakdown by event type
         breakdown_result = await db.execute(
-            db.query(
+            select(
                 CostEvent.event_type,
                 func.sum(CostEvent.total_cost).label("cost"),
                 func.count(CostEvent.id).label("count"),
             )
-            .filter(
-                and_(
-                    CostEvent.user_id == user_id,
-                    CostEvent.created_at >= month_start,
-                    CostEvent.created_at < month_end,
-                )
-            )
+            .where(where)
             .group_by(CostEvent.event_type)
         )
-        
         breakdown = {
-            row.event_type: {
-                "cost": float(row.cost),
-                "count": row.count,
-            }
+            str(row.event_type): {"cost": float(row.cost), "count": row.count}
             for row in breakdown_result
         }
-        
+
         return {
             "user_id": str(user_id),
             "month": month_start.isoformat(),
             "total_cost": total_cost,
             "breakdown": breakdown,
         }
-    
+
     @staticmethod
     async def get_system_monthly_cost(
         db: AsyncSession,
         month: Optional[datetime] = None,
     ) -> Dict:
-        """
-        Get total system cost for a given month.
-        
-        Args:
-            db: Database session
-            month: Month to query (defaults to current month)
-        
-        Returns:
-            Dict with total cost and breakdown
-        """
+        """System-wide cost breakdown for *month*."""
         if month is None:
             month = datetime.utcnow()
-        
-        # Calculate month boundaries
+
         month_start = month.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        
         if month.month == 12:
             month_end = month_start.replace(year=month.year + 1, month=1)
         else:
             month_end = month_start.replace(month=month.month + 1)
-        
-        # Query total cost
+
+        where = and_(
+            CostEvent.created_at >= month_start,
+            CostEvent.created_at < month_end,
+        )
+
         total_result = await db.execute(
-            func.sum(CostEvent.total_cost).filter(
-                and_(
-                    CostEvent.created_at >= month_start,
-                    CostEvent.created_at < month_end,
-                )
-            )
+            select(func.sum(CostEvent.total_cost)).where(where)
         )
         total_cost = total_result.scalar() or 0.0
-        
-        # Query breakdown by event type
+
         breakdown_result = await db.execute(
-            db.query(
+            select(
                 CostEvent.event_type,
                 func.sum(CostEvent.total_cost).label("cost"),
                 func.count(CostEvent.id).label("count"),
             )
-            .filter(
-                and_(
-                    CostEvent.created_at >= month_start,
-                    CostEvent.created_at < month_end,
-                )
-            )
+            .where(where)
             .group_by(CostEvent.event_type)
         )
-        
         breakdown = {
-            row.event_type: {
-                "cost": float(row.cost),
-                "count": row.count,
-            }
+            str(row.event_type): {"cost": float(row.cost), "count": row.count}
             for row in breakdown_result
         }
-        
-        # Query by provider
+
         provider_result = await db.execute(
-            db.query(
+            select(
                 CostEvent.provider,
                 func.sum(CostEvent.total_cost).label("cost"),
             )
-            .filter(
-                and_(
-                    CostEvent.created_at >= month_start,
-                    CostEvent.created_at < month_end,
-                )
-            )
+            .where(where)
             .group_by(CostEvent.provider)
         )
-        
-        by_provider = {
-            row.provider: float(row.cost)
-            for row in provider_result
-        }
-        
+        by_provider = {str(row.provider): float(row.cost) for row in provider_result}
+
         return {
             "month": month_start.isoformat(),
             "total_cost": total_cost,
             "breakdown_by_type": breakdown,
             "breakdown_by_provider": by_provider,
         }
-    
+
     @staticmethod
     async def get_user_cost_trend(
         db: AsyncSession,
         user_id: UUID,
         days: int = 30,
     ) -> List[Dict]:
-        """
-        Get daily cost trend for a user.
-        
-        Args:
-            db: Database session
-            user_id: User ID
-            days: Number of days to look back
-        
-        Returns:
-            List of daily cost totals
-        """
+        """Daily cost trend for *user_id* over the last *days* days."""
         start_date = datetime.utcnow() - timedelta(days=days)
-        
+
         result = await db.execute(
-            db.query(
-                func.date(CostEvent.created_at).label("date"),
+            select(
+                func.date_trunc("day", CostEvent.created_at).label("date"),
                 func.sum(CostEvent.total_cost).label("cost"),
             )
-            .filter(
+            .where(
                 and_(
                     CostEvent.user_id == user_id,
                     CostEvent.created_at >= start_date,
                 )
             )
-            .group_by(func.date(CostEvent.created_at))
-            .order_by(func.date(CostEvent.created_at))
+            .group_by(func.date_trunc("day", CostEvent.created_at))
+            .order_by(func.date_trunc("day", CostEvent.created_at))
         )
-        
+
         return [
-            {
-                "date": row.date.isoformat(),
-                "cost": float(row.cost),
-            }
+            {"date": row.date.strftime("%Y-%m-%d"), "cost": float(row.cost)}
             for row in result
         ]

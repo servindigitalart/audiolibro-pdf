@@ -31,6 +31,8 @@ from app.schemas.processing import (
 )
 from app.celery_app import celery_app, revoke_task
 from app.tasks.processing import process_document_job
+from app.financial.quota.quota_service import QuotaService
+from app.financial.cost.cost_enums import ActionType
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +118,15 @@ class ProcessingService:
         logger.info("[SONORO] enforce_limits user_id=%s", user.id)
         await self._enforce_user_job_limit(user.id)
         await self._enforce_global_job_limit()
-        
+
+        # Enforce monthly job quota (raises QuotaExceeded / HTTP 429 if exceeded)
+        await QuotaService.check_quota(
+            db=self.db,
+            user_id=user.id,
+            action_type=ActionType.TTS_JOB_CREATE,
+            amount=1,
+        )
+
         # Parse job type
         job_type = JobType(request.job_type)
         
@@ -155,6 +165,15 @@ class ProcessingService:
 
         await self.db.commit()
         await self.db.refresh(job)
+
+        # Increment the monthly job counter so the quota UI stays accurate.
+        # This runs after commit so a DB error here doesn't roll back the job row.
+        await QuotaService.increment_usage(
+            db=self.db,
+            user_id=user.id,
+            action_type=ActionType.TTS_JOB_CREATE,
+            amount=1,
+        )
 
         logger.info(
             "[SONORO] job_created job_id=%s document_id=%s priority=%s queue=%s",

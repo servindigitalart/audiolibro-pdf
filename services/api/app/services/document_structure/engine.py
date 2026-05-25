@@ -86,7 +86,9 @@ class DocumentStructureEngine:
         """
         start_time = time.time()
         
-        logger.info(f"Starting document structure analysis for {document_id}")
+        logger.info(
+            "[SONORO] chapter_detection_started document_id=%s", document_id
+        )
         
         try:
             # Step 1: Extract full text with structure
@@ -108,8 +110,21 @@ class DocumentStructureEngine:
             )
             
             if not fused_chapters:
-                logger.warning("No chapters detected, creating single chapter")
+                logger.warning(
+                    "[SONORO] chapter_detection_no_results document_id=%s — using length_fallback",
+                    document_id,
+                )
                 fused_chapters = self._create_fallback_chapter(pages, total_pages)
+            else:
+                methods = {c.detection_method for c in fused_chapters}
+                avg_conf = sum(c.confidence for c in fused_chapters) / len(fused_chapters)
+                logger.info(
+                    "[SONORO] chapters_detected document_id=%s count=%d methods=%s avg_confidence=%.2f",
+                    document_id,
+                    len(fused_chapters),
+                    sorted(methods),
+                    avg_conf,
+                )
             
             # Step 4: Extract text for each chapter
             chapters_with_text = await self._extract_chapter_text(
@@ -257,13 +272,16 @@ class DocumentStructureEngine:
         total_pages: int
     ) -> List[DetectedChapter]:
         """Create fallback chapter when no detection succeeds."""
+        logger.warning(
+            "[SONORO] chapters_detected count=1 method=length_fallback confidence=0.50"
+        )
         return [
             DetectedChapter(
                 title="Full Document",
                 start_page=1,
                 end_page=total_pages,
                 confidence=0.5,
-                detection_method="fallback"
+                detection_method="length_fallback"
             )
         ]
     

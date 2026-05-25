@@ -500,6 +500,12 @@ class AccountService:
                 period_end=now + timedelta(days=30),
             )
         
+        logger.info(
+            "[SONORO] account_overview_usage",
+            user_id=str(user_id),
+            used=quota.characters_used,
+            jobs=quota.jobs_created,
+        )
         return UsageSummarySchema(
             characters_used=quota.characters_used,
             jobs_created=quota.jobs_created,

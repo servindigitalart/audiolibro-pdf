@@ -12,6 +12,7 @@ import uuid
 
 from sqlalchemy import (
     Column,
+    Float,
     String,
     Integer,
     BigInteger,
@@ -184,6 +185,11 @@ class Document(Base):
         String(10),
         nullable=True,
         comment="ISO 639-1 language code (e.g., 'en', 'es')"
+    )
+    language_detection_confidence = Column(
+        Float,
+        nullable=True,
+        comment="langdetect confidence score 0.0–1.0; NULL when detection failed/skipped"
     )
 
     # Error tracking
