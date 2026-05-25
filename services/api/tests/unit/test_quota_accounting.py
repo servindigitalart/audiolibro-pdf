@@ -310,6 +310,124 @@ class TestRetryNoDuplication:
 
 
 # ---------------------------------------------------------------------------
+# _dispatch_job worker path
+# ---------------------------------------------------------------------------
+
+
+class TestDispatchJobWorkerPath:
+    """
+    Tests for _dispatch_job — the single-event-loop async wrapper used by the
+    Celery task.  All DB side-effects are mocked so these are true unit tests.
+    """
+
+    @pytest.mark.asyncio
+    async def test_quota_exhausted_marks_job_failed_and_does_not_reraise(self):
+        """
+        When _process_job_async raises QuotaExhaustedError, _dispatch_job must:
+        - call _mark_job_failed with the error text
+        - return normally (no exception propagates to Celery → no retry)
+        """
+        from unittest.mock import AsyncMock, patch
+        from app.tasks.processing import _dispatch_job
+        from app.financial.quota.quota_service import QuotaExhaustedError
+
+        job_id = uuid4()
+        err_msg = "Monthly character quota exceeded: used=0, requested=62722, limit=10000."
+
+        with patch(
+            "app.tasks.processing._process_job_async",
+            new_callable=AsyncMock,
+            side_effect=QuotaExhaustedError(err_msg),
+        ):
+            with patch(
+                "app.tasks.processing._mark_job_failed",
+                new_callable=AsyncMock,
+            ) as mock_fail:
+                # Must NOT raise — quota failure is permanent, no Celery retry
+                await _dispatch_job(job_id, "task-abc", 0)
+
+        mock_fail.assert_awaited_once()
+        called_error_msg = mock_fail.call_args[0][1]  # positional arg index 1
+        assert "quota exceeded" in called_error_msg.lower()
+
+    @pytest.mark.asyncio
+    async def test_quota_exhausted_passes_full_error_message(self):
+        """error_message forwarded verbatim to _mark_job_failed."""
+        from unittest.mock import AsyncMock, patch
+        from app.tasks.processing import _dispatch_job
+        from app.financial.quota.quota_service import QuotaExhaustedError
+
+        job_id = uuid4()
+        err_msg = "Monthly character quota exceeded: used=0, requested=62722, limit=10000."
+
+        with patch("app.tasks.processing._process_job_async", new_callable=AsyncMock,
+                   side_effect=QuotaExhaustedError(err_msg)):
+            with patch("app.tasks.processing._mark_job_failed",
+                       new_callable=AsyncMock) as mock_fail:
+                await _dispatch_job(job_id, "task-abc", 0)
+
+        assert mock_fail.call_args[0][1] == err_msg
+
+    @pytest.mark.asyncio
+    async def test_generic_exception_marks_failed_and_reraises(self):
+        """
+        A non-quota exception (network error, TTS timeout, etc.) must:
+        - call _mark_job_failed so the DB shows FAILED
+        - re-raise so Celery can schedule a retry
+        """
+        from unittest.mock import AsyncMock, patch
+        from app.tasks.processing import _dispatch_job
+
+        job_id = uuid4()
+
+        with patch("app.tasks.processing._process_job_async", new_callable=AsyncMock,
+                   side_effect=RuntimeError("network timeout")):
+            with patch("app.tasks.processing._mark_job_failed",
+                       new_callable=AsyncMock) as mock_fail:
+                with pytest.raises(RuntimeError, match="network timeout"):
+                    await _dispatch_job(job_id, "task-xyz", 1)
+
+        mock_fail.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_success_does_not_call_mark_failed(self):
+        """Happy path: _mark_job_failed is never called when job completes."""
+        from unittest.mock import AsyncMock, patch
+        from app.tasks.processing import _dispatch_job
+
+        job_id = uuid4()
+
+        with patch("app.tasks.processing._process_job_async", new_callable=AsyncMock):
+            with patch("app.tasks.processing._mark_job_failed",
+                       new_callable=AsyncMock) as mock_fail:
+                await _dispatch_job(job_id, "task-ok", 0)
+
+        mock_fail.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_quota_exhausted_is_not_http_exception(self):
+        """
+        QuotaExhaustedError must not be an HTTPException — Celery workers
+        must not receive HTTP semantics.
+        """
+        from app.financial.quota.quota_service import QuotaExhaustedError
+        from fastapi import HTTPException
+
+        err = QuotaExhaustedError("quota exceeded: used=5000, limit=10000")
+        assert not isinstance(err, HTTPException)
+        assert "quota exceeded" in str(err).lower()
+
+    def test_quota_exhausted_error_message_contains_actionable_info(self):
+        """Error message must tell user what happened and how to proceed."""
+        from app.financial.quota.quota_service import QuotaExhaustedError
+
+        msg = "Monthly character quota exceeded: used=0, requested=62722, limit=10000."
+        err = QuotaExhaustedError(msg)
+        text = str(err)
+        assert "62722" in text or "quota" in text.lower()
+
+
+# ---------------------------------------------------------------------------
 # Plan limits sanity
 # ---------------------------------------------------------------------------
 

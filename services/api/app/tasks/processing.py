@@ -211,35 +211,44 @@ def process_document_job(self, job_id: str):
         "[SONORO] worker_task_received job_id=%s task_id=%s retry=%s",
         job_id, self.request.id, self.request.retries,
     )
-    
-    try:
-        # Run async operations
-        asyncio.run(_process_job_async(job_uuid, self.request.id, self.request.retries))
 
+    # Single asyncio.run() call — _dispatch_job handles all failure paths
+    # within the same event loop so _mark_job_failed always uses the same
+    # SQLAlchemy connection pool context.  A second asyncio.run() after the
+    # first loop closes causes "Future attached to a different loop".
+    try:
+        asyncio.run(_dispatch_job(job_uuid, self.request.id, self.request.retries))
+    except Exception:
+        raise  # non-quota exceptions re-raise here for Celery retry
+
+
+async def _dispatch_job(job_id: UUID, task_id: str, retry_count: int) -> None:
+    """
+    Single-event-loop wrapper around _process_job_async.
+
+    All exception handling — including the DB write in _mark_job_failed — runs
+    inside this coroutine so they share the same asyncio event loop that
+    asyncio.run() creates.  Calling asyncio.run() a second time after the first
+    loop closes would create a new loop that cannot reuse SQLAlchemy's connection
+    pool, causing "Future attached to a different loop".
+
+    QuotaExhaustedError is caught and silently terminates the coroutine (returns
+    normally) so Celery does not schedule a retry — quota failures are permanent
+    until the next billing period.  The job row is marked FAILED before returning.
+
+    All other exceptions mark the job FAILED then re-raise so Celery can retry.
+    """
+    try:
+        await _process_job_async(job_id, task_id, retry_count)
     except _QuotaExhaustedError as e:
-        # Quota exhaustion is permanent until the next billing period — mark
-        # the job as failed immediately without triggering a Celery retry.
         logger.warning(
             "[SONORO] quota_exhausted_no_retry job_id=%s error=%s", job_id, str(e)
         )
-        asyncio.run(_mark_job_failed(job_uuid, str(e), self.request.retries))
-        # Do NOT re-raise: no retry on quota failure.
-
+        await _mark_job_failed(job_id, str(e), retry_count)
+        # Return normally — quota failure is permanent, no Celery retry.
     except Exception as e:
-        logger.error(
-            f"Processing job failed: {str(e)}",
-            extra={
-                "job_id": str(job_uuid),
-                "task_id": self.request.id,
-                "retry_count": self.request.retries
-            },
-            exc_info=True
-        )
-
-        # Update job status to failed
-        asyncio.run(_mark_job_failed(job_uuid, str(e), self.request.retries))
-
-        # Re-raise to trigger Celery retry
+        logger.error("[SONORO] job_error job_id=%s error=%s", job_id, str(e), exc_info=True)
+        await _mark_job_failed(job_id, str(e), retry_count)
         raise
 
 
