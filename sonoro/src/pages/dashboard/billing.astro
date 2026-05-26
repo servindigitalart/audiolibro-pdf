@@ -80,7 +80,7 @@ if (!overview && overviewError?.includes('401')) {
       <a href="/dashboard/billing" class="mt-4 inline-block text-xs text-red-700 underline">Try again</a>
     </div>
   ) : overview ? (
-    <BillingPanel overview={overview} tiers={tiers} client:load />
+    <BillingPanel overview={overview} tiers={tiers} checkoutSuccess={checkoutResult === 'success'} client:load />
   ) : (
     <div class="rounded-xl border border-sonoro-border bg-sonoro-surface px-6 py-8 text-center">
       <p class="text-sm text-sonoro-muted">Loading billing information…</p>

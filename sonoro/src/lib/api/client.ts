@@ -35,6 +35,9 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   return config;
 });
 
+// Serialises token refreshes — prevents two simultaneous 401s from both calling /auth/refresh
+let _refreshPromise: Promise<void> | null = null;
+
 // On 401: attempt silent token rotation, then retry once; otherwise redirect to login
 api.interceptors.response.use(
   (r) => r,
@@ -47,12 +50,22 @@ api.interceptors.response.use(
       const refresh = Cookies.get('refresh_token');
       if (refresh) {
         try {
-          const { data } = await axios.post(`${BASE}/auth/refresh`, {
-            refresh_token: refresh,
-          });
-          setTokens(data.access_token, data.refresh_token);
-          if (original.headers) {
-            original.headers.Authorization = `Bearer ${data.access_token}`;
+          // Coalesce concurrent refresh calls into a single request
+          if (!_refreshPromise) {
+            _refreshPromise = axios
+              .post(`${BASE}/auth/refresh`, { refresh_token: refresh })
+              .then(({ data }) => {
+                setTokens(data.access_token, data.refresh_token);
+              })
+              .finally(() => {
+                _refreshPromise = null;
+              });
+          }
+          await _refreshPromise;
+
+          const newToken = Cookies.get('access_token');
+          if (original.headers && newToken) {
+            original.headers.Authorization = `Bearer ${newToken}`;
           }
           return api(original);
         } catch {
@@ -95,6 +108,23 @@ export async function logout() {
 export async function getMe() {
   const { data } = await api.get('/auth/me');
   return data;
+}
+
+/**
+ * Probe the session before making billing API calls.
+ * Calling /auth/me routes through the 401 interceptor which will silently
+ * rotate an expired access token using the refresh token, so subsequent
+ * requests (e.g. checkout) will have a fresh token available.
+ */
+export async function probeSession(): Promise<boolean> {
+  try {
+    await api.get('/auth/me');
+    console.log('[client] billing_session_refreshed');
+    return true;
+  } catch {
+    console.warn('[client] checkout_auth_missing – session could not be rehydrated');
+    return false;
+  }
 }
 
 // ── Documents ────────────────────────────────────────────────────────────────
@@ -167,9 +197,19 @@ export async function createCheckoutSession(
   tier: string,
   interval: 'monthly' | 'annual' = 'monthly'
 ) {
-  const { data } = await api.post('/billing/checkout', { tier, interval });
-  console.log('[client] checkout_response_url=', data?.url, 'tier=', tier, 'interval=', interval);
-  return data as { url: string };
+  if (!Cookies.get('access_token')) {
+    console.warn('[client] checkout_auth_missing tier=', tier, '– no access_token cookie');
+  }
+  try {
+    const { data } = await api.post('/billing/checkout', { tier, interval });
+    console.log('[client] checkout_response_url=', data?.url, 'tier=', tier, 'interval=', interval);
+    return data as { url: string };
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response?.status === 401) {
+      console.warn('[client] checkout_auth_missing tier=', tier, '– 401 from checkout endpoint');
+    }
+    throw err;
+  }
 }
 
 export async function createPortalSession() {

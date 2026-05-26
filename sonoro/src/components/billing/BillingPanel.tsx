@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { createCheckoutSession, createPortalSession, getErrorMessage } from '@/lib/api/client';
+import { useState, useEffect } from 'react';
+import { createCheckoutSession, createPortalSession, probeSession, getErrorMessage } from '@/lib/api/client';
 import { fmtChars } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import type { TierConfig, AccountOverview } from '@/lib/api/types';
@@ -7,14 +7,22 @@ import type { TierConfig, AccountOverview } from '@/lib/api/types';
 interface Props {
   overview: AccountOverview;
   tiers?: TierConfig[] | null;
+  checkoutSuccess?: boolean;
 }
 
 type Interval = 'monthly' | 'annual';
 
-export default function BillingPanel({ overview, tiers: tiersProp }: Props) {
+export default function BillingPanel({ overview, tiers: tiersProp, checkoutSuccess }: Props) {
   const [interval, setInterval] = useState<Interval>('monthly');
   const [loading, setLoading]   = useState<string | null>(null);
   const [error, setError]       = useState<string | null>(null);
+  // True while rehydrating the session after returning from Stripe — buttons are disabled.
+  const [refreshing, setRefreshing] = useState(checkoutSuccess === true);
+
+  useEffect(() => {
+    if (!checkoutSuccess) return;
+    probeSession().finally(() => setRefreshing(false));
+  }, [checkoutSuccess]);
 
   // Guard: backend wraps in {tiers:[]} — SSR server.ts unwraps, but be defensive here too
   const tiers: TierConfig[] = Array.isArray(tiersProp)
@@ -28,6 +36,19 @@ export default function BillingPanel({ overview, tiers: tiersProp }: Props) {
   const hasCustomer = currentTier !== 'FREE' || hasSubscription;
   const TIER_RANK: Record<string, number> = { FREE: 0, BASIC: 1, PRO: 2, ENTERPRISE: 3 };
 
+  function _authErrorMessage(err: unknown): string {
+    const msg = getErrorMessage(err);
+    if (
+      msg.toLowerCase().includes('not authenticated') ||
+      msg.toLowerCase().includes('not authorized') ||
+      msg.toLowerCase().includes('could not validate') ||
+      msg === 'Request failed with status code 401'
+    ) {
+      return 'Session expired — please refresh the page or sign in again.';
+    }
+    return msg;
+  }
+
   async function handleUpgrade(tier: string) {
     setLoading(tier);
     setError(null);
@@ -35,7 +56,7 @@ export default function BillingPanel({ overview, tiers: tiersProp }: Props) {
       const { url } = await createCheckoutSession(tier, interval);
       window.location.href = url;
     } catch (err) {
-      setError(getErrorMessage(err));
+      setError(_authErrorMessage(err));
       setLoading(null);
     }
   }
@@ -47,7 +68,7 @@ export default function BillingPanel({ overview, tiers: tiersProp }: Props) {
       const { url } = await createPortalSession();
       window.location.href = url;
     } catch (err) {
-      setError(getErrorMessage(err));
+      setError(_authErrorMessage(err));
       setLoading(null);
     }
   }
@@ -98,10 +119,10 @@ export default function BillingPanel({ overview, tiers: tiersProp }: Props) {
           {currentTier !== 'FREE' && hasCustomer && (
             <button
               onClick={handlePortal}
-              disabled={loading === 'portal'}
+              disabled={loading === 'portal' || refreshing}
               className="btn-outline btn-sm shrink-0 disabled:opacity-50"
             >
-              {loading === 'portal' ? 'Loading…' : 'Manage billing'}
+              {loading === 'portal' ? 'Loading…' : refreshing ? 'Refreshing…' : 'Manage billing'}
             </button>
           )}
         </div>
@@ -223,16 +244,16 @@ export default function BillingPanel({ overview, tiers: tiersProp }: Props) {
                     ) : isHigher ? (
                       <button
                         onClick={() => handleUpgrade(tier.tier)}
-                        disabled={!!loading}
+                        disabled={!!loading || refreshing}
                         className={cn(
                           'w-full rounded-full py-2 text-xs font-semibold transition-all active:scale-[0.98]',
                           isHighlight
                             ? 'bg-sonoro-amber text-sonoro-black hover:bg-sonoro-amber-dark'
                             : 'bg-sonoro-black text-sonoro-white hover:bg-sonoro-800',
-                          loading === tier.tier && 'opacity-50 cursor-not-allowed'
+                          (loading === tier.tier || refreshing) && 'opacity-50 cursor-not-allowed'
                         )}
                       >
-                        {loading === tier.tier ? 'Loading…' : `Upgrade to ${tier.tier}`}
+                        {refreshing ? 'Refreshing…' : loading === tier.tier ? 'Loading…' : `Upgrade to ${tier.tier}`}
                       </button>
                     ) : (
                       <div className="rounded-full bg-sonoro-surface border border-sonoro-border py-2 text-center text-xs text-sonoro-muted">
