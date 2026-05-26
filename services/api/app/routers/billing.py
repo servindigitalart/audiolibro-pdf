@@ -127,8 +127,9 @@ async def create_checkout_session(
             )
             await db.commit()
             logger.info(
-                "[SONORO] stripe_customer_created user_id=%s customer_id=%s",
-                current_user.id, customer_id,
+                "stripe_customer_created",
+                user_id=str(current_user.id),
+                customer_id=customer_id,
             )
 
         # 2. Create the hosted checkout session
@@ -144,22 +145,27 @@ async def create_checkout_session(
         )
 
         logger.info(
-            "[SONORO] stripe_checkout_created user_id=%s tier=%s price_id=%s session_id=%s",
-            current_user.id, tier, price, session.id,
+            "stripe_checkout_created",
+            user_id=str(current_user.id),
+            tier=tier,
+            price_id=price,
+            session_id=session.id,
         )
 
         return CheckoutResponse(session_id=session.id, url=session.url)
 
     except StripeError as exc:
         logger.error(
-            "[SONORO] stripe_checkout_failed user_id=%s tier=%s error=%s",
-            current_user.id, tier, exc,
+            "stripe_checkout_failed",
+            user_id=str(current_user.id),
+            tier=tier,
+            error=str(exc),
         )
         raise HTTPException(status_code=502, detail=f"Stripe error: {exc}")
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error("[SONORO] stripe_checkout_unexpected user_id=%s error=%s", current_user.id, exc, exc_info=True)
+        logger.error("stripe_checkout_unexpected", user_id=str(current_user.id), error=str(exc), exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to create checkout session")
 
 
@@ -188,10 +194,10 @@ async def handle_stripe_webhook(
     try:
         event = await webhook_svc.process(payload, stripe_signature or "")
     except InvalidSignature as exc:
-        logger.error("[SONORO] stripe_webhook_invalid_signature error=%s", exc)
+        logger.error("stripe_webhook_invalid_signature", error=str(exc))
         raise HTTPException(status_code=400, detail="Invalid webhook signature")
     except Exception as exc:
-        logger.error("[SONORO] stripe_webhook_processing_failed error=%s", exc, exc_info=True)
+        logger.error("stripe_webhook_processing_failed", error=str(exc), exc_info=True)
         raise HTTPException(status_code=500, detail="Webhook processing failed")
 
     return JSONResponse(
@@ -209,8 +215,9 @@ async def get_subscription(
 ) -> SubscriptionResponse:
     """Return current subscription details, augmented with live Stripe data."""
     logger.info(
-        "[SONORO] billing_subscription_request user_id=%s plan=%s",
-        current_user.id, current_user.plan_tier,
+        "billing_subscription_request",
+        user_id=str(current_user.id),
+        plan=current_user.plan_tier,
     )
 
     cancel_at_period_end: Optional[bool] = None
@@ -222,8 +229,9 @@ async def get_subscription(
                 cancel_at_period_end = sub.cancel_at_period_end
         except StripeError as exc:
             logger.warning(
-                "[SONORO] stripe_subscription_fetch_failed sub_id=%s error=%s",
-                current_user.stripe_subscription_id, exc,
+                "stripe_subscription_fetch_failed",
+                sub_id=current_user.stripe_subscription_id,
+                error=str(exc),
             )
 
     response = SubscriptionResponse(
@@ -236,8 +244,10 @@ async def get_subscription(
     )
 
     logger.info(
-        "[SONORO] billing_subscription_response user_id=%s plan=%s status=%s",
-        current_user.id, response.plan_tier, response.status,
+        "billing_subscription_response",
+        user_id=str(current_user.id),
+        plan=response.plan_tier,
+        status=response.status,
     )
 
     return response
@@ -265,12 +275,13 @@ async def create_portal_session(
             return_url=return_url,
         )
         logger.info(
-            "[SONORO] stripe_portal_created user_id=%s customer_id=%s",
-            current_user.id, current_user.stripe_customer_id,
+            "stripe_portal_created",
+            user_id=str(current_user.id),
+            customer_id=current_user.stripe_customer_id,
         )
         return PortalResponse(url=url)
     except StripeError as exc:
-        logger.error("[SONORO] stripe_portal_failed user_id=%s error=%s", current_user.id, exc)
+        logger.error("stripe_portal_failed", user_id=str(current_user.id), error=str(exc))
         raise HTTPException(status_code=502, detail=f"Stripe error: {exc}")
 
 
@@ -311,8 +322,10 @@ async def cancel_subscription(
             await db.commit()
 
         logger.info(
-            "[SONORO] stripe_subscription_cancelled user_id=%s sub_id=%s immediately=%s",
-            current_user.id, current_user.stripe_subscription_id, request.immediately,
+            "stripe_subscription_cancelled",
+            user_id=str(current_user.id),
+            sub_id=current_user.stripe_subscription_id,
+            immediately=request.immediately,
         )
 
         return JSONResponse(
@@ -328,5 +341,5 @@ async def cancel_subscription(
             },
         )
     except StripeError as exc:
-        logger.error("[SONORO] stripe_cancel_failed user_id=%s error=%s", current_user.id, exc)
+        logger.error("stripe_cancel_failed", user_id=str(current_user.id), error=str(exc))
         raise HTTPException(status_code=502, detail=f"Stripe error: {exc}")
