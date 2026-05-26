@@ -242,6 +242,7 @@ class MockStripeClient(StripeProvider):
 
         session = StripeCheckoutSession(
             id=session_id,
+            url=f"https://checkout.stripe.com/mock/{session_id}",
             customer_id=customer_id,
             subscription_id=sub_id,
             status="complete",

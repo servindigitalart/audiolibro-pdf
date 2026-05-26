@@ -10,19 +10,34 @@ from pydantic import BaseModel, Field, ConfigDict
 
 
 class CheckoutRequest(BaseModel):
-    """Request to create a checkout session."""
-    
-    price_id: str = Field(
-        ..., 
-        description="Stripe price ID for the subscription"
+    """Request to create a checkout session.
+
+    Accepts either:
+      - tier + interval  (frontend path — backend resolves the Stripe price ID)
+      - price_id         (API / direct path — price ID is caller-supplied)
+    success_url and cancel_url are optional; the backend derives them from
+    settings.frontend_url when not supplied.
+    """
+
+    tier: Optional[str] = Field(
+        None,
+        description="Plan tier to subscribe to (BASIC, PRO, ENTERPRISE)"
     )
-    success_url: str = Field(
-        ...,
-        description="URL to redirect to after successful payment"
+    interval: str = Field(
+        default="monthly",
+        description="Billing interval: 'monthly' or 'annual'"
     )
-    cancel_url: str = Field(
-        ...,
-        description="URL to redirect to if payment is cancelled"
+    price_id: Optional[str] = Field(
+        None,
+        description="Stripe price ID (overrides tier+interval when supplied)"
+    )
+    success_url: Optional[str] = Field(
+        None,
+        description="URL to redirect to after successful payment (defaults to billing page)"
+    )
+    cancel_url: Optional[str] = Field(
+        None,
+        description="URL to redirect to if payment is cancelled (defaults to billing page)"
     )
     promotion_code: Optional[str] = Field(
         None,

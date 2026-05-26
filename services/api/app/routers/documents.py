@@ -31,6 +31,7 @@ from fastapi import (
     APIRouter,
     Depends,
     File,
+    Form,
     UploadFile,
     HTTPException,
     status,
@@ -55,7 +56,9 @@ from app.services.document_service import DocumentService
 from app.services.account_service import AccountService
 from app.services.processing_service import ProcessingService
 from app.services.storage_service import get_storage_service
+from app.services.preflight_service import PreflightService
 from app.schemas.processing import ProcessDocumentRequest
+from app.schemas.document import PreflightResult
 from app.financial.financial_metrics import (
     documents_uploaded_total,
     documents_failed_total,
@@ -102,6 +105,8 @@ router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 )
 async def upload_document(
     file: UploadFile = File(..., description="PDF file to upload"),
+    force_reprocess: bool = Form(False, description="Re-upload even if this PDF was already converted"),
+    preflight_only: bool = Form(False, description="Return preflight analysis instead of auto-enqueuing processing"),
     db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -132,11 +137,12 @@ async def upload_document(
         except Exception as log_error:
             logger.warning(f"Failed to log activity: {str(log_error)}")
         
-        # Upload document
+        # Upload document (duplicate check happens inside the service)
         document_service = DocumentService(db)
         result = await document_service.upload_document(
             file=file,
-            user=current_user
+            user=current_user,
+            force_reprocess=force_reprocess,
         )
         
         # Record metrics
@@ -162,30 +168,79 @@ async def upload_document(
             }
         )
 
+        # Preflight analysis: computed when preflight_only=True so the frontend
+        # can show the analysis card before the user clicks "Start conversion".
+        # Duplicates skip preflight — they already have a completed/failed job.
+        preflight_data = None
+        if preflight_only and not result.is_duplicate:
+            try:
+                from app.db.models.document import Document as _DocModel
+                doc_result = await db.execute(
+                    select(_DocModel).where(_DocModel.id == result.id)
+                )
+                doc_obj = doc_result.scalar_one_or_none()
+                if doc_obj:
+                    analysis = await PreflightService.analyze(
+                        document=doc_obj,
+                        user=current_user,
+                        db=db,
+                    )
+                    preflight_data = PreflightResult(
+                        language=analysis.language,
+                        language_name=analysis.language_name,
+                        voice_id=analysis.voice_id,
+                        voice_display_name=analysis.voice_display_name,
+                        available_voices=[
+                            {"voice_id": v.voice_id, "display_name": v.display_name}
+                            for v in analysis.available_voices
+                        ],
+                        estimated_characters=analysis.estimated_characters,
+                        estimated_chapters=analysis.estimated_chapters,
+                        estimated_duration_seconds=analysis.estimated_duration_seconds,
+                        estimated_processing_minutes=analysis.estimated_processing_minutes,
+                        fits_current_plan=analysis.fits_current_plan,
+                        quota_exceeded=analysis.quota_exceeded,
+                        chars_limit=analysis.chars_limit,
+                        chars_used=analysis.chars_used,
+                        chars_remaining_before=analysis.chars_remaining_before,
+                        chars_remaining_after=analysis.chars_remaining_after,
+                        plan_tier=analysis.plan_tier,
+                        plan_display_name=analysis.plan_display_name,
+                    )
+                    result.preflight = preflight_data
+            except Exception as pf_err:
+                logger.warning(
+                    "[SONORO] preflight_analysis_failed document_id=%s error=%s",
+                    result.id, repr(pf_err),
+                )
+
         # Auto-enqueue processing immediately after upload.
-        # A failed enqueue is logged but does not fail the upload response —
-        # the user can still see their document and retry from the dashboard.
-        try:
-            processing_service = ProcessingService(db)
-            await processing_service.create_processing_job(
-                document_id=result.id,
-                user=current_user,
-                request=ProcessDocumentRequest(),
-            )
-            logger.info(
-                f"Processing job enqueued",
-                extra={'document_id': str(result.id), 'user_id': str(current_user.id)}
-            )
-        except Exception as enqueue_err:
-            # str(HTTPException) returns "" — always log .detail and the type explicitly.
-            err_detail = getattr(enqueue_err, "detail", None) or repr(enqueue_err)
-            logger.error(
-                "[SONORO] auto_enqueue_failed document_id=%s user_id=%s "
-                "error_type=%s error=%s",
-                result.id, current_user.id,
-                type(enqueue_err).__name__, err_detail,
-                exc_info=True,
-            )
+        # Skipped when preflight_only=True (user must click "Start conversion").
+        # Skipped for duplicates — the existing job (or completed audiobook)
+        # is already in the right state; no need to queue another run and
+        # waste quota.  force_reprocess creates a fresh document row so
+        # result.is_duplicate is always False in that branch.
+        if not result.is_duplicate and not preflight_only:
+            try:
+                processing_service = ProcessingService(db)
+                await processing_service.create_processing_job(
+                    document_id=result.id,
+                    user=current_user,
+                    request=ProcessDocumentRequest(),
+                )
+                logger.info(
+                    "[SONORO] processing_job_enqueued document_id=%s user_id=%s",
+                    result.id, current_user.id,
+                )
+            except Exception as enqueue_err:
+                err_detail = getattr(enqueue_err, "detail", None) or repr(enqueue_err)
+                logger.error(
+                    "[SONORO] auto_enqueue_failed document_id=%s user_id=%s "
+                    "error_type=%s error=%s",
+                    result.id, current_user.id,
+                    type(enqueue_err).__name__, err_detail,
+                    exc_info=True,
+                )
 
         return result
         
@@ -421,11 +476,64 @@ async def delete_document(
 
 
 # ============================================
+# START PROCESSING ENDPOINT
+# ============================================
+
+@router.post(
+    "/{document_id}/process",
+    status_code=status.HTTP_201_CREATED,
+    summary="Start Document Processing",
+    description="Create a processing job for a document (called after user reviews preflight analysis).",
+)
+async def start_document_processing(
+    document_id: UUID,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Enqueue processing for a document that was uploaded with preflight_only=True."""
+    from app.db.models.document import Document as _DocModel
+
+    doc_result = await db.execute(
+        select(_DocModel).where(
+            _DocModel.id == document_id,
+            _DocModel.user_id == current_user.id,
+        )
+    )
+    doc = doc_result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    processing_service = ProcessingService(db)
+    job = await processing_service.create_processing_job(
+        document_id=document_id,
+        user=current_user,
+        request=ProcessDocumentRequest(),
+    )
+    logger.info(
+        "[SONORO] processing_job_enqueued_via_start document_id=%s user_id=%s job_id=%s",
+        document_id, current_user.id, job.id,
+    )
+    return {"job_id": str(job.id), "status": "queued"}
+
+
+# ============================================
 # PROCESSING JOB STATUS ENDPOINT
 # ============================================
 
-def _derive_stage(progress: int) -> str | None:
-    """Map progress percentage to a frontend-friendly stage label."""
+_STAGE_MAP = {
+    "analyzing":        "analyzing",
+    "chapter_detection": "detecting_chapters",
+    "tts_generation":   "generating_audio",
+    "final_assembly":   "finalizing",
+    "upload_finalize":  "finalizing",
+}
+
+
+def _derive_stage(progress: int, current_stage: str | None = None) -> str | None:
+    """Map stored current_stage (preferred) or progress % to a frontend step label."""
+    if current_stage:
+        return _STAGE_MAP.get(current_stage, "analyzing")
+    # Fallback for jobs created before migration 020
     if progress <= 20:
         return "analyzing"
     if progress <= 60:
@@ -476,13 +584,32 @@ async def get_document_job(
 
     progress = job.progress_percentage or 0
     status_str = job.status.value if hasattr(job.status, 'value') else str(job.status)
+    current_stage = job.current_stage if hasattr(job, "current_stage") else None
+
+    # Estimated seconds remaining: derived from chunk throughput rate, not stored.
+    # Uses started_at as the reference so it covers the full job elapsed time,
+    # which slightly over-estimates during the analyzing/chapter-detection phases
+    # but converges to accurate once TTS starts (the dominant cost).
+    estimated_seconds_remaining = None
+    completed = getattr(job, "completed_chunks", None) or 0
+    total = getattr(job, "total_chunks", None) or 0
+    if status_str == "processing" and completed > 0 and total > completed and job.started_at:
+        from datetime import datetime as _dt
+        elapsed = (_dt.utcnow() - job.started_at).total_seconds()
+        rate = completed / max(elapsed, 1)  # chunks/sec
+        if rate > 0:
+            estimated_seconds_remaining = max(0, int((total - completed) / rate))
 
     return {
         "id":           str(job.id),
         "document_id":  str(job.document_id),
         "status":       status_str,
-        "stage":        _derive_stage(progress) if status_str == "processing" else None,
+        "stage":        _derive_stage(progress, current_stage) if status_str == "processing" else None,
+        "current_stage": current_stage,
         "progress":     progress,
+        "completed_chunks": completed,
+        "total_chunks":     total,
+        "estimated_seconds_remaining": estimated_seconds_remaining,
         "started_at":   job.started_at.isoformat() if job.started_at else None,
         "completed_at": job.completed_at.isoformat() if job.completed_at else None,
         "error_message": job.error_message,

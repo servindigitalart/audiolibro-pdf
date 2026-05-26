@@ -244,6 +244,8 @@ class Document(Base):
         Index("idx_documents_user_created", "user_id", "created_at"),
         Index("idx_documents_processing_created", "processing_status", "created_at"),
         Index("idx_documents_upload_status", "upload_status", "created_at"),
+        # Fast per-user duplicate lookup: WHERE user_id=? AND checksum_sha256=?
+        Index("idx_documents_user_checksum", "user_id", "checksum_sha256"),
     )
 
     def __repr__(self) -> str:

@@ -240,6 +240,7 @@ class RealStripeClient(StripeProvider):
             )
             return StripeCheckoutSession(
                 id=session.id,
+                url=session.url or "",
                 customer_id=customer_id,
                 subscription_id=session.get("subscription"),
                 status=session.status,

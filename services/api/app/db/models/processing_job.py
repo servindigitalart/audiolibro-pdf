@@ -126,6 +126,27 @@ class ProcessingJob(Base):
         default=0,
         comment="Processing progress (0-100)"
     )
+
+    # Chunk-level progress (migration 020)
+    total_chunks = Column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+        comment="Total TTS chunks across all chapters; set before TTS loop starts"
+    )
+    completed_chunks = Column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+        comment="TTS chunks synthesised so far; incremented after each chunk"
+    )
+    current_stage = Column(
+        String(50),
+        nullable=True,
+        comment="Pipeline stage: analyzing | chapter_detection | tts_generation | final_assembly | upload_finalize"
+    )
     
     # Error handling
     error_message = Column(

@@ -14,7 +14,7 @@ import uuid
 import fitz  # PyMuPDF
 from langdetect import detect, LangDetectException
 from fastapi import UploadFile, HTTPException, status
-from sqlalchemy import select, func, desc
+from sqlalchemy import select, func, desc, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.document import Document, UploadStatus, ProcessingStatus
@@ -145,10 +145,34 @@ class DocumentService:
                 extraction_error=str(e)
             )
     
+    async def _find_duplicate(
+        self,
+        user_id: UUID,
+        checksum: str,
+    ) -> "Document | None":
+        """
+        Return the most recent successfully-uploaded document owned by *user_id*
+        that has the same SHA-256 hash, or None if no match exists.
+
+        Only considers upload_status=UPLOADED rows so that a failed storage
+        upload of the same file does not block re-upload.
+        """
+        result = await self.db.execute(
+            select(Document).where(
+                and_(
+                    Document.user_id == user_id,
+                    Document.checksum_sha256 == checksum,
+                    Document.upload_status == UploadStatus.UPLOADED,
+                )
+            ).order_by(desc(Document.created_at)).limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def upload_document(
         self,
         file: UploadFile,
         user: User,
+        force_reprocess: bool = False,
     ) -> DocumentUploadResponse:
         """
         Complete document upload pipeline.
@@ -190,10 +214,66 @@ class DocumentService:
             # Step 2: Sanitize filename
             sanitized = sanitize_filename(file.filename or "document.pdf")
             original_filename = file.filename or "document.pdf"
-            
+
+            # Step 2b: Duplicate detection
+            # Check BEFORE metadata extraction (which reads the file) so we
+            # avoid PyMuPDF work when we already have the audiobook ready.
+            existing = await self._find_duplicate(user.id, checksum)
+            if existing is not None:
+                ps = existing.processing_status
+                ps_val = ps.value if hasattr(ps, "value") else str(ps)
+                logger.info(
+                    "[SONORO] duplicate_pdf_detected user_id=%s existing_document_id=%s status=%s",
+                    user.id, existing.id, ps_val,
+                )
+
+                if not force_reprocess:
+                    is_active = ps_val in ("queued", "processing", "assembling", "finalizing")
+                    is_failed = ps_val == "failed"
+
+                    if is_active:
+                        msg = "This PDF is currently being converted. Track progress below."
+                    elif ps_val == "completed":
+                        msg = "You already converted this PDF. Open your existing audiobook."
+                    else:
+                        msg = "A previous conversion of this PDF failed. Use Reprocess to try again."
+
+                    logger.info(
+                        "[SONORO] duplicate_pdf_reused document_id=%s", existing.id
+                    )
+                    return DocumentUploadResponse(
+                        id=existing.id,
+                        user_id=existing.user_id,
+                        filename=existing.filename,
+                        original_filename=existing.original_filename,
+                        file_size_bytes=existing.file_size_bytes,
+                        file_size_mb=existing.file_size_mb,
+                        mime_type=existing.mime_type,
+                        upload_status=(
+                            existing.upload_status.value
+                            if hasattr(existing.upload_status, "value")
+                            else str(existing.upload_status)
+                        ),
+                        processing_status=ps_val,
+                        page_count=existing.page_count,
+                        character_estimate=existing.character_estimate,
+                        language_detected=existing.language_detected,
+                        checksum_sha256=existing.checksum_sha256,
+                        created_at=existing.created_at,
+                        is_duplicate=True,
+                        duplicate_message=msg,
+                        can_reprocess=is_failed,
+                    )
+                else:
+                    # force_reprocess=True: create a fresh document anyway
+                    logger.info(
+                        "[SONORO] duplicate_pdf_force_reprocess old_document_id=%s user_id=%s",
+                        existing.id, user.id,
+                    )
+
             # Step 3: Extract metadata
             metadata = await self._extract_metadata(file)
-            
+
             # Step 4: Create database record (PENDING status)
             storage_path = f"documents/{user.id}/{document_id}.pdf"
             

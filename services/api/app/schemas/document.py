@@ -12,12 +12,46 @@ from pydantic import BaseModel, Field, field_validator
 
 
 # ============================================
+# PREFLIGHT ANALYSIS SCHEMA
+# ============================================
+
+class AvailableVoiceSchema(BaseModel):
+    voice_id: str
+    display_name: str
+
+
+class PreflightResult(BaseModel):
+    """Lightweight pre-conversion analysis returned with the upload response."""
+
+    language: str = Field(..., description="ISO 639-1 language code")
+    language_name: str = Field(..., description="Human-readable language name")
+    voice_id: str = Field(..., description="Selected TTS voice ID")
+    voice_display_name: str = Field(..., description="Human-readable voice label")
+    available_voices: list[AvailableVoiceSchema] = Field(
+        default_factory=list,
+        description="Voices selectable for this language"
+    )
+    estimated_characters: int = Field(..., description="Estimated character count")
+    estimated_chapters: int = Field(..., description="Estimated chapter count")
+    estimated_duration_seconds: int = Field(..., description="Estimated audiobook duration in seconds")
+    estimated_processing_minutes: float = Field(..., description="Estimated processing time in minutes")
+    fits_current_plan: bool = Field(..., description="True if character count fits within current plan quota")
+    quota_exceeded: bool = Field(..., description="True if this document would exceed the quota")
+    chars_limit: int = Field(..., description="Monthly character limit for current plan")
+    chars_used: int = Field(..., description="Characters used this billing period")
+    chars_remaining_before: int = Field(..., description="Characters remaining before this upload")
+    chars_remaining_after: int = Field(..., description="Characters remaining after conversion (can be negative)")
+    plan_tier: str = Field(..., description="Current plan tier (FREE | BASIC | PRO | ENTERPRISE)")
+    plan_display_name: str = Field(..., description="Human-readable plan name")
+
+
+# ============================================
 # REQUEST SCHEMAS
 # ============================================
 
 class DocumentUploadResponse(BaseModel):
     """Response after successful document upload."""
-    
+
     id: UUID = Field(..., description="Document unique identifier")
     user_id: UUID = Field(..., description="Owner user ID")
     filename: str = Field(..., description="Sanitized filename")
@@ -32,6 +66,14 @@ class DocumentUploadResponse(BaseModel):
     language_detected: Optional[str] = Field(None, description="Detected language code")
     checksum_sha256: str = Field(..., description="SHA256 checksum")
     created_at: datetime = Field(..., description="Upload timestamp")
+
+    # Duplicate detection fields — False / None on a fresh upload
+    is_duplicate: bool = Field(False, description="True when this PDF was already uploaded by this user")
+    duplicate_message: Optional[str] = Field(None, description="Human-readable explanation for the duplicate")
+    can_reprocess: bool = Field(False, description="True when the duplicate failed and can be reprocessed")
+
+    # Preflight analysis — populated when preflight_only=True on upload
+    preflight: Optional[PreflightResult] = Field(None, description="Pre-conversion analysis (language, duration, quota)")
     
     class Config:
         from_attributes = True

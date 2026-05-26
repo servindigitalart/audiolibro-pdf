@@ -39,6 +39,7 @@ class StripeSubscription:
 @dataclass
 class StripeCheckoutSession:
     id: str                            # cs_xxx
+    url: str                           # Stripe-hosted checkout URL
     customer_id: str
     subscription_id: Optional[str]    # sub_xxx (None for one-time charges)
     status: str                        # complete|expired|open

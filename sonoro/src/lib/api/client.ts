@@ -101,16 +101,25 @@ export async function getMe() {
 
 export async function uploadDocument(
   file: File,
-  onProgress?: (pct: number) => void
+  onProgress?: (pct: number) => void,
+  forceReprocess = false,
+  preflightOnly = true,
 ): Promise<UploadResponse> {
   const fd = new FormData();
   fd.append('file', file);
+  if (forceReprocess) fd.append('force_reprocess', 'true');
+  if (preflightOnly) fd.append('preflight_only', 'true');
   const { data } = await api.post<UploadResponse>('/documents/upload', fd, {
     headers: { 'Content-Type': 'multipart/form-data' },
     onUploadProgress: (e) => {
       if (onProgress && e.total) onProgress(Math.round((e.loaded / e.total) * 100));
     },
   });
+  return data;
+}
+
+export async function startProcessing(documentId: string): Promise<{ job_id: string; status: string }> {
+  const { data } = await api.post(`/documents/${documentId}/process`);
   return data;
 }
 

@@ -65,6 +65,30 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
         )
         await _metrics_collector.start()
 
+        # Stripe configuration validation
+        stripe_mode = getattr(settings, "stripe_mode", "mock")
+        stripe_prices = [
+            getattr(settings, k, "")
+            for k in (
+                "stripe_price_basic_monthly", "stripe_price_basic_yearly",
+                "stripe_price_pro_monthly",   "stripe_price_pro_yearly",
+                "stripe_price_enterprise_monthly", "stripe_price_enterprise_yearly",
+            )
+        ]
+        stripe_prices_loaded = sum(1 for p in stripe_prices if p)
+        logger.info(f"[SONORO] stripe_mode={stripe_mode}")
+        logger.info(f"[SONORO] stripe_prices_loaded count={stripe_prices_loaded}")
+        if stripe_mode == "real":
+            if not getattr(settings, "stripe_secret_key", ""):
+                logger.error("[SONORO] STRIPE_MODE=real but STRIPE_SECRET_KEY is not set")
+            if not getattr(settings, "stripe_webhook_secret", ""):
+                logger.error("[SONORO] STRIPE_MODE=real but STRIPE_WEBHOOK_SECRET is not set")
+            if stripe_prices_loaded < 6:
+                logger.warning(
+                    "[SONORO] stripe_prices_incomplete configured=%d expected=6",
+                    stripe_prices_loaded,
+                )
+
         logger.info("✅ All services initialized successfully")
         yield
     except Exception as e:

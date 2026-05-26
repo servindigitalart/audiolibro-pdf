@@ -331,6 +331,7 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
             # STEP 1: Analyze Document Structure (BLOCK 6B)
             # ============================================
             logger.info("[SONORO] step=1 action=analyze_document_structure")
+            job.current_stage = 'analyzing'
             job.progress_percentage = 5
             await session.commit()
 
@@ -378,7 +379,8 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
                 # Fall back to single chapter
                 structure = None
             
-            job.progress_percentage = 20
+            job.current_stage = 'chapter_detection'
+            job.progress_percentage = 15
             await session.commit()
 
             # ============================================
@@ -442,32 +444,59 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
             # No audio PCM data is loaded into Python memory.
             # ============================================
             logger.info("[SONORO] step=2 action=tts_synthesis")
-            job.progress_percentage = 30
-            await session.commit()
 
             tts_service = TTSService()
             chapter_count = structure.chapter_count if structure else 1
             chapters_to_process = structure.chapters if (structure and structure.chapters) else []
-            total_chapters = len(chapters_to_process)
             chapter_audio_paths = []  # S3 keys (durability / per-chapter playback)
+
+            # Pre-compute chunks for every chapter so we know total_chunks
+            # before starting TTS — this gives the frontend an accurate denominator.
+            if chapters_to_process:
+                prepared = []
+                for i, chapter in enumerate(chapters_to_process):
+                    chapter_text = chapter.text_content if chapter.text_content else (
+                        f"Chapter {i + 1}: {chapter.title}. "
+                        f"This chapter spans pages {chapter.start_page} to {chapter.end_page}."
+                    )
+                    prepared.append((chapter, chapter_text, _chunk_text(chapter_text)))
+                total_chunks = sum(len(c) for _, _, c in prepared)
+            else:
+                fallback_text = (
+                    f"{document.original_filename.replace('.pdf', '')}. "
+                    f"This document has {document.page_count or 0} pages."
+                )
+                fallback_chunks = _chunk_text(fallback_text)
+                total_chunks = len(fallback_chunks)
+                prepared = []  # signals the fallback path below
+
+            job.total_chunks = total_chunks
+            job.completed_chunks = 0
+            job.current_stage = 'tts_generation'
+            job.progress_percentage = 25
+            await session.commit()
+
+            _completed_chunks = 0
+
+            def _tts_progress(completed: int, total: int) -> int:
+                """Map completed/total chunks to 25–90% range."""
+                if total <= 0:
+                    return 25
+                return 25 + int(completed / total * 65)
 
             with tempfile.TemporaryDirectory(prefix=f"sonoro_{job_id}_") as _tmp:
                 tmp = Path(_tmp)
                 local_chapter_paths = []  # local disk paths reused for final assembly
 
                 # ---- TTS synthesis ----
-                if not chapters_to_process:
+                if not prepared:
+                    # Fallback: no chapters detected
                     logger.warning(
                         "[SONORO] no_chapters_detected doc_id=%s — using fallback text",
                         document.id,
                     )
-                    fallback_text = (
-                        f"{document.original_filename.replace('.pdf', '')}. "
-                        f"This document has {document.page_count or 0} pages."
-                    )
-                    chunks = _chunk_text(fallback_text)
                     chunk_paths = []
-                    for j, chunk in enumerate(chunks):
+                    for j, chunk in enumerate(fallback_chunks):
                         audio_bytes = await tts_service.synthesize_text(
                             db=session,
                             user_id=document.user_id,
@@ -480,6 +509,15 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
                         with open(p, "wb") as fh:
                             fh.write(audio_bytes)
                         chunk_paths.append(p)
+
+                        _completed_chunks += 1
+                        job.completed_chunks = _completed_chunks
+                        job.progress_percentage = _tts_progress(_completed_chunks, total_chunks)
+                        await session.commit()
+                        logger.info(
+                            "[SONORO] progress_update job_id=%s completed=%d total=%d percent=%d",
+                            job_id, _completed_chunks, total_chunks, job.progress_percentage,
+                        )
 
                     chapter_path = str(tmp / "chapter_1.mp3")
                     if len(chunk_paths) == 1:
@@ -503,13 +541,8 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
                     local_chapter_paths.append(chapter_path)
                     logger.info("[SONORO] chapter_audio_ready path=%s", s3_path)
                 else:
-                    for i, chapter in enumerate(chapters_to_process):
+                    for i, (chapter, chapter_text, chunks) in enumerate(prepared):
                         chapter_label = f"chapter_{i + 1}"
-                        chapter_text = chapter.text_content if chapter.text_content else (
-                            f"Chapter {i + 1}: {chapter.title}. "
-                            f"This chapter spans pages {chapter.start_page} to {chapter.end_page}."
-                        )
-                        chunks = _chunk_text(chapter_text)
                         logger.info(
                             "[SONORO] tts_chunking chapter_id=%s chunks=%d total_chars=%d",
                             chapter_label, len(chunks), len(chapter_text),
@@ -529,9 +562,14 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
                             with open(p, "wb") as fh:
                                 fh.write(audio_bytes)
                             chunk_paths.append(p)
+
+                            _completed_chunks += 1
+                            job.completed_chunks = _completed_chunks
+                            job.progress_percentage = _tts_progress(_completed_chunks, total_chunks)
+                            await session.commit()
                             logger.info(
-                                "[SONORO] tts_chunk_done index=%d/%d chapter_id=%s",
-                                j + 1, len(chunks), chapter_label,
+                                "[SONORO] progress_update job_id=%s completed=%d total=%d percent=%d",
+                                job_id, _completed_chunks, total_chunks, job.progress_percentage,
                             )
 
                         chapter_path = str(tmp / f"chapter_{i + 1}.mp3")
@@ -578,11 +616,9 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
                                 "[SONORO] chapter_audio_path_persisted order=%d chapter_db_id=%s",
                                 i, db_ch.id,
                             )
-
-                        progress = 30 + int((i + 1) / total_chapters * 60)
-                        job.progress_percentage = min(progress, 90)
                         await session.commit()
 
+                job.current_stage = 'final_assembly'
                 job.progress_percentage = 90
                 await session.commit()
 
@@ -591,7 +627,7 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
                     "[SONORO] final_assembly_start chapters=%d", len(local_chapter_paths)
                 )
                 document.processing_status = ProcessingStatus.ASSEMBLING
-                job.progress_percentage = 91
+                job.progress_percentage = 92
                 await session.commit()
 
                 assembled_path = str(tmp / "audiobook_assembled.mp3")
@@ -616,6 +652,7 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
                 )
                 await metadata_writer.write_metadata(audio_path=assembled_path, metadata=meta)
 
+                job.current_stage = 'upload_finalize'
                 job.progress_percentage = 96
                 await session.commit()
 

@@ -25,10 +25,30 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import logging
+
 from app.billing.constants import WebhookEventType
 from app.billing.models import WebhookEvent
 from app.billing.subscription import SubscriptionService, InvalidTransition
 from app.billing.constants import SubscriptionStatus
+
+logger = logging.getLogger(__name__)
+
+
+def _price_id_to_tier(price_id: str) -> str:
+    """Map a Stripe price ID to our uppercase PlanTier string. Returns '' if unknown."""
+    if not price_id:
+        return ""
+    from app.core.config import settings
+    mapping = {
+        settings.stripe_price_basic_monthly:      "BASIC",
+        settings.stripe_price_basic_yearly:       "BASIC",
+        settings.stripe_price_pro_monthly:        "PRO",
+        settings.stripe_price_pro_yearly:         "PRO",
+        settings.stripe_price_enterprise_monthly: "ENTERPRISE",
+        settings.stripe_price_enterprise_yearly:  "ENTERPRISE",
+    }
+    return mapping.get(price_id, "")
 
 
 class InvalidSignature(Exception):
@@ -97,6 +117,8 @@ class WebhookService:
         event_id = data.get("id", str(uuid.uuid4()))
         event_type = data.get("type", "unknown")
 
+        logger.info("[SONORO] stripe_webhook_received type=%s event_id=%s", event_type, event_id)
+
         # Dedup: if already processed, return existing row
         existing = await self._get_event(event_id)
         if existing is not None:
@@ -158,12 +180,17 @@ class WebhookService:
         """
         checkout.session.completed: customer completed Stripe-hosted checkout.
 
-        Links the Stripe subscription_id to the user row and transitions the
-        subscription to ACTIVE.  Safe to replay — transition is idempotent.
+        Links the Stripe subscription_id to the user row, transitions the
+        subscription to ACTIVE, and updates plan_tier from session metadata.
+        Safe to replay — transition is idempotent.
         """
+        from sqlalchemy import update as sa_update
+        from app.db.models.user import User
+
         session_obj = data.get("data", {}).get("object", {})
         customer_id = session_obj.get("customer")
         subscription_id = session_obj.get("subscription")
+        tier = session_obj.get("metadata", {}).get("tier", "")
 
         if not customer_id:
             return
@@ -172,14 +199,18 @@ class WebhookService:
         if user is None:
             return
 
+        old_plan = user.plan_tier
+
+        updates: dict = {}
         if subscription_id and user.stripe_subscription_id != subscription_id:
-            from sqlalchemy import update as sa_update
-            from app.db.models.user import User
+            updates["stripe_subscription_id"] = subscription_id
+        if tier and tier in ("BASIC", "PRO", "ENTERPRISE"):
+            updates["plan_tier"] = tier
+        if updates:
             await self._session.execute(
-                sa_update(User)
-                .where(User.id == user.id)
-                .values(stripe_subscription_id=subscription_id)
+                sa_update(User).where(User.id == user.id).values(**updates)
             )
+            await self._session.commit()
 
         svc = SubscriptionService(self._session)
         try:
@@ -192,6 +223,11 @@ class WebhookService:
             )
         except InvalidTransition:
             pass  # Already active — idempotent
+
+        logger.info(
+            "[SONORO] stripe_webhook_checkout_completed user_id=%s old_plan=%s new_plan=%s sub_id=%s",
+            user.id, old_plan, tier or old_plan, subscription_id,
+        )
 
     async def _on_invoice_paid(self, data: dict, event: WebhookEvent) -> None:
         sub_obj = data.get("data", {}).get("object", {})
@@ -234,6 +270,9 @@ class WebhookService:
             pass
 
     async def _on_subscription_updated(self, data: dict, event: WebhookEvent) -> None:
+        from sqlalchemy import update as sa_update
+        from app.db.models.user import User
+
         sub_obj = data.get("data", {}).get("object", {})
         stripe_status = sub_obj.get("status", "")
         customer_id = sub_obj.get("customer")
@@ -242,6 +281,18 @@ class WebhookService:
         user = await self._find_user_by_stripe_customer(customer_id)
         if user is None:
             return
+
+        old_plan = user.plan_tier
+
+        # Derive plan_tier from price_id in subscription items
+        items = sub_obj.get("items", {}).get("data", [])
+        price_id = items[0].get("price", {}).get("id", "") if items else ""
+        tier = _price_id_to_tier(price_id)
+        if tier and tier != user.plan_tier:
+            await self._session.execute(
+                sa_update(User).where(User.id == user.id).values(plan_tier=tier)
+            )
+            await self._session.commit()
 
         status_map = {
             "active":   SubscriptionStatus.ACTIVE,
@@ -266,7 +317,15 @@ class WebhookService:
         except InvalidTransition:
             pass
 
+        logger.info(
+            "[SONORO] subscription_updated user_id=%s old_plan=%s new_plan=%s status=%s",
+            user.id, old_plan, tier or old_plan, stripe_status,
+        )
+
     async def _on_subscription_deleted(self, data: dict, event: WebhookEvent) -> None:
+        from sqlalchemy import update as sa_update
+        from app.db.models.user import User
+
         sub_obj = data.get("data", {}).get("object", {})
         customer_id = sub_obj.get("customer")
         if not customer_id:
@@ -274,6 +333,17 @@ class WebhookService:
         user = await self._find_user_by_stripe_customer(customer_id)
         if user is None:
             return
+
+        old_plan = user.plan_tier
+
+        # Reset to FREE on subscription deletion
+        await self._session.execute(
+            sa_update(User)
+            .where(User.id == user.id)
+            .values(plan_tier="FREE", stripe_subscription_id=None)
+        )
+        await self._session.commit()
+
         svc = SubscriptionService(self._session)
         try:
             await svc.transition(
@@ -285,6 +355,11 @@ class WebhookService:
             )
         except InvalidTransition:
             pass
+
+        logger.info(
+            "[SONORO] subscription_deleted user_id=%s old_plan=%s new_plan=FREE",
+            user.id, old_plan,
+        )
 
     async def _on_trial_ending(self, data: dict, event: WebhookEvent) -> None:
         pass  # Notify user — no state change required
