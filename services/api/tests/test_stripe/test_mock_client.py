@@ -138,12 +138,11 @@ async def test_create_checkout_session_returns_session(mock_stripe):
         price_id="price_basic",
         success_url="https://app.com/success",
         cancel_url="https://app.com/cancel",
-        idempotency_key="checkout-idem-1",
     )
     assert session.id.startswith("cs_mock_")
     assert session.customer_id == c.id
     assert session.subscription_id is not None
-    assert session.status == "complete"
+    assert session.status == "open"
 
 
 async def test_create_billing_portal_session(mock_stripe):

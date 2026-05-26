@@ -168,6 +168,7 @@ export async function createCheckoutSession(
   interval: 'monthly' | 'annual' = 'monthly'
 ) {
   const { data } = await api.post('/billing/checkout', { tier, interval });
+  console.log('[client] checkout_response_url=', data?.url, 'tier=', tier, 'interval=', interval);
   return data as { url: string };
 }
 

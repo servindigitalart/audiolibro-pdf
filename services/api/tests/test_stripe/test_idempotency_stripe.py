@@ -59,20 +59,24 @@ async def test_different_keys_create_different_subscriptions(mock_stripe):
     assert sub1.id != sub2.id
 
 
-async def test_checkout_session_idempotency_key_recorded(mock_stripe):
+async def test_checkout_session_creates_fresh_session_each_call(mock_stripe):
     c = await mock_stripe.create_customer("idem4@test.internal", "uid")
-    key = f"checkout_{uuid.uuid4().hex}"
 
-    await mock_stripe.create_checkout_session(
+    s1 = await mock_stripe.create_checkout_session(
         customer_id=c.id,
         price_id="price_basic",
         success_url="https://app.com/success",
         cancel_url="https://app.com/cancel",
-        idempotency_key=key,
+    )
+    s2 = await mock_stripe.create_checkout_session(
+        customer_id=c.id,
+        price_id="price_basic",
+        success_url="https://app.com/success",
+        cancel_url="https://app.com/cancel",
     )
 
-    call = mock_stripe.calls("create_checkout_session")[0]
-    assert call["idempotency_key"] == key
+    assert s1.id != s2.id, "Each upgrade click must produce a distinct session"
+    assert mock_stripe.call_count("create_checkout_session") == 2
 
 
 # ── Retry after one-shot failure ──────────────────────────────────────────────

@@ -142,11 +142,11 @@ class StripeProvider(ABC):
         price_id: str,
         success_url: str,
         cancel_url: str,
-        idempotency_key: str,
         trial_days: int = 0,
         metadata: dict | None = None,
     ) -> StripeCheckoutSession:
         """
         Create a Stripe Checkout session for hosted payment.
-        Returns the session — callers redirect to session.url.
+        Returns a fresh session every call — callers redirect to session.url.
+        No idempotency key: reusing a key would return an expired/completed session.
         """

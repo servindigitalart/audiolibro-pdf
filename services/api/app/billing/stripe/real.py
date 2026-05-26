@@ -218,7 +218,6 @@ class RealStripeClient(StripeProvider):
         price_id: str,
         success_url: str,
         cancel_url: str,
-        idempotency_key: str,
         trial_days: int = 0,
         metadata: dict | None = None,
     ) -> StripeCheckoutSession:
@@ -236,7 +235,7 @@ class RealStripeClient(StripeProvider):
             session = await self._wrap(
                 self._stripe.checkout.Session.create,
                 **params,
-                idempotency_key=idempotency_key,
+                # No idempotency_key — every call must produce a fresh session.
             )
             return StripeCheckoutSession(
                 id=session.id,

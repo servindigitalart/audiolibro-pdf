@@ -132,14 +132,14 @@ async def create_checkout_session(
                 customer_id=customer_id,
             )
 
-        # 2. Create the hosted checkout session
-        idempotency_key = f"checkout-{current_user.id}-{price}"
+        # 2. Create a fresh hosted checkout session on every request.
+        # Idempotency keys are intentionally omitted here — reusing the same key
+        # causes Stripe to return the same (possibly expired/completed) session.
         session = await provider.create_checkout_session(
             customer_id=customer_id,
             price_id=price,
             success_url=success_url,
             cancel_url=cancel_url,
-            idempotency_key=idempotency_key,
             trial_days=request.trial_days or 0,
             metadata={"user_id": str(current_user.id), "tier": tier},
         )
@@ -150,6 +150,7 @@ async def create_checkout_session(
             tier=tier,
             price_id=price,
             session_id=session.id,
+            session_url=session.url,
         )
 
         return CheckoutResponse(session_id=session.id, url=session.url)

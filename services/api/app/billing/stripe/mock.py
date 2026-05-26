@@ -221,7 +221,6 @@ class MockStripeClient(StripeProvider):
         price_id: str,
         success_url: str,
         cancel_url: str,
-        idempotency_key: str,
         trial_days: int = 0,
         metadata: dict | None = None,
     ) -> StripeCheckoutSession:
@@ -236,7 +235,7 @@ class MockStripeClient(StripeProvider):
             status=status,
             current_period_end=int(time.time()) + 30 * 86_400,
             price_id=price_id,
-            metadata={"idempotency_key": idempotency_key, **(metadata or {})},
+            metadata=dict(metadata or {}),
         )
         self._subscriptions[sub_id] = sub
 
@@ -245,7 +244,7 @@ class MockStripeClient(StripeProvider):
             url=f"https://checkout.stripe.com/mock/{session_id}",
             customer_id=customer_id,
             subscription_id=sub_id,
-            status="complete",
+            status="open",
         )
         self._sessions[session_id] = session
         self._log(
@@ -253,6 +252,5 @@ class MockStripeClient(StripeProvider):
             session_id=session_id,
             customer_id=customer_id,
             price_id=price_id,
-            idempotency_key=idempotency_key,
         )
         return session
