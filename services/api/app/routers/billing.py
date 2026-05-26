@@ -38,7 +38,7 @@ from app.schemas.billing import (
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/billing", tags=["billing"])
+router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
 
 
 def _get_provider() -> StripeProvider:

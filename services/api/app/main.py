@@ -197,9 +197,17 @@ app.include_router(oauth_router)  # Google OAuth exchange
 # Startup event log
 @app.on_event("startup")
 async def startup_event():
-    """Log startup completion."""
+    """Log startup completion and emit registered route table."""
     logger.info("🚀 Sonoro API is ready to accept requests")
     logger.info(f"📚 API Documentation: http://{settings.api_host}:{settings.api_port}/docs")
+
+    # Emit every registered route so Railway logs prove the router is mounted
+    for route in app.routes:
+        methods = getattr(route, "methods", None)
+        path    = getattr(route, "path", None)
+        if methods and path:
+            for method in sorted(methods):
+                logger.info("[SONORO] registered_route path=%s method=%s", path, method)
 
 
 # Root endpoint (will be removed in production, handled by health router)
