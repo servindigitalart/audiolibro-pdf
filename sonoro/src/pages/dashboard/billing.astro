@@ -4,16 +4,38 @@ import BillingPanel from '@/components/billing/BillingPanel';
 import { fetchAccountOverview, fetchTierCatalog } from '@/lib/api/server';
 import type { TierConfig } from '@/lib/api/types';
 
-const token = (Astro.locals as any).token as string;
+const token = (Astro.locals as any).token as string | undefined;
+
+// Unauthenticated — hard redirect to login
+if (!token) return Astro.redirect('/login');
 
 const upgrade = Astro.url.searchParams.get('upgrade') ?? null;
+const checkoutResult = Astro.url.searchParams.get('checkout') ?? null;
 
-const [overview, tiers] = await Promise.all([
-  fetchAccountOverview(token).catch(() => null),
-  fetchTierCatalog().catch(() => [] as TierConfig[]),
-]);
+console.log('[SSR] billing_page_start');
 
-if (!overview) return Astro.redirect('/login');
+let overview = null;
+let overviewError: string | null = null;
+let tiers: TierConfig[] = [];
+
+try {
+  [overview, tiers] = await Promise.all([
+    fetchAccountOverview(token),
+    fetchTierCatalog().catch((err) => {
+      console.error('[SSR] billing_tiers_failed error=', err instanceof Error ? err.message : err);
+      return [] as TierConfig[];
+    }),
+  ]);
+} catch (err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  console.error('[SSR] billing_fetch_failed error=', msg);
+  overviewError = msg;
+}
+
+// Only redirect to login on 401/403 — other errors show inline
+if (!overview && overviewError?.includes('401')) {
+  return Astro.redirect('/login');
+}
 ---
 
 <DashboardLayout title="Billing – Sonoro" activeNav="billing">
@@ -22,9 +44,26 @@ if (!overview) return Astro.redirect('/login');
     <p class="text-sm text-sonoro-muted">Manage your plan, view usage, and update payment details.</p>
   </div>
 
-  {upgrade && (
+  {checkoutResult === 'success' && (
+    <div class="mb-6 rounded-xl border border-green-200 bg-green-50 px-5 py-4 flex items-center gap-3">
+      <span class="text-xl" aria-hidden="true">🎉</span>
+      <div>
+        <p class="text-sm font-semibold text-green-800">Subscription activated!</p>
+        <p class="text-xs text-green-700 mt-0.5">Your plan has been upgraded. It may take a moment to reflect.</p>
+      </div>
+    </div>
+  )}
+
+  {checkoutResult === 'cancelled' && (
+    <div class="mb-6 rounded-xl border border-sonoro-border bg-sonoro-surface px-5 py-4 flex items-center gap-3">
+      <span class="text-xl" aria-hidden="true">↩</span>
+      <p class="text-sm text-sonoro-600">Checkout cancelled — no charge was made.</p>
+    </div>
+  )}
+
+  {upgrade && !checkoutResult && (
     <div class="mb-6 rounded-xl border border-sonoro-amber/40 bg-sonoro-amber-light px-5 py-4 flex items-center gap-3">
-      <span class="text-xl">🎉</span>
+      <span class="text-xl" aria-hidden="true">✨</span>
       <div>
         <p class="text-sm font-semibold text-sonoro-amber-dark capitalize">
           {upgrade} plan selected
@@ -34,5 +73,17 @@ if (!overview) return Astro.redirect('/login');
     </div>
   )}
 
-  <BillingPanel overview={overview} tiers={tiers} client:load />
+  {overviewError ? (
+    <div class="rounded-xl border border-red-200 bg-red-50 px-6 py-8 text-center">
+      <p class="text-sm font-semibold text-red-800 mb-1">Could not load billing information</p>
+      <p class="text-xs text-red-600">{overviewError}</p>
+      <a href="/dashboard/billing" class="mt-4 inline-block text-xs text-red-700 underline">Try again</a>
+    </div>
+  ) : overview ? (
+    <BillingPanel overview={overview} tiers={tiers} client:load />
+  ) : (
+    <div class="rounded-xl border border-sonoro-border bg-sonoro-surface px-6 py-8 text-center">
+      <p class="text-sm text-sonoro-muted">Loading billing information…</p>
+    </div>
+  )}
 </DashboardLayout>

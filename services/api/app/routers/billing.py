@@ -12,7 +12,6 @@ Uses:
 The legacy app.services.stripe_service module is no longer used here.
 """
 
-import uuid
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Header, status
@@ -209,6 +208,11 @@ async def get_subscription(
     provider: Annotated[StripeProvider, Depends(_get_provider)],
 ) -> SubscriptionResponse:
     """Return current subscription details, augmented with live Stripe data."""
+    logger.info(
+        "[SONORO] billing_subscription_request user_id=%s plan=%s",
+        current_user.id, current_user.plan_tier,
+    )
+
     cancel_at_period_end: Optional[bool] = None
 
     if current_user.stripe_subscription_id:
@@ -222,7 +226,7 @@ async def get_subscription(
                 current_user.stripe_subscription_id, exc,
             )
 
-    return SubscriptionResponse(
+    response = SubscriptionResponse(
         subscription_id=current_user.stripe_subscription_id,
         customer_id=current_user.stripe_customer_id,
         status=current_user.subscription_status,
@@ -230,6 +234,13 @@ async def get_subscription(
         current_period_end=current_user.current_period_end,
         cancel_at_period_end=cancel_at_period_end,
     )
+
+    logger.info(
+        "[SONORO] billing_subscription_response user_id=%s plan=%s status=%s",
+        current_user.id, response.plan_tier, response.status,
+    )
+
+    return response
 
 
 # ── Customer portal ───────────────────────────────────────────────────────────

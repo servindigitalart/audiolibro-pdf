@@ -81,10 +81,10 @@ class SubscriptionResponse(BaseModel):
 
 class PortalRequest(BaseModel):
     """Request to create a customer portal session."""
-    
-    return_url: str = Field(
-        ...,
-        description="URL to return to after portal session"
+
+    return_url: Optional[str] = Field(
+        None,
+        description="URL to return to after portal session (defaults to billing page)"
     )
 
 

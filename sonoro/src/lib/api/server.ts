@@ -115,18 +115,32 @@ function normalizeAccountOverview(raw: any): AccountOverview {
 // ── Public endpoints (no auth needed) ──────────────────────────────────────
 
 export async function fetchTierCatalog(): Promise<TierConfig[]> {
-  return get<TierConfig[]>('/pricing/tiers');
+  // Backend returns { tiers: [...] } — unwrap the envelope
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const raw = await get<any>('/pricing/tiers');
+  const tiers: TierConfig[] = Array.isArray(raw) ? raw : (raw?.tiers ?? []);
+  console.log(`[SSR] fetchTierCatalog count=${tiers.length}`);
+  return tiers;
 }
 
 // ── Authenticated endpoints ─────────────────────────────────────────────────
 
 export async function fetchAccountOverview(token: string): Promise<AccountOverview> {
+  console.log('[SSR] billing_fetch_start');
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const raw = await get<any>('/account/overview', token);
+  let raw: any;
   try {
-    return normalizeAccountOverview(raw);
+    raw = await get<any>('/account/overview', token);
   } catch (err) {
-    console.error('[SSR] Failed to normalize account overview:', err);
+    console.error('[SSR] billing_fetch_failed error=', err instanceof Error ? err.message : err);
+    throw err;
+  }
+  try {
+    const result = normalizeAccountOverview(raw);
+    console.log(`[SSR] billing_fetch_ok plan=${result.billing.plan_tier}`);
+    return result;
+  } catch (err) {
+    console.error('[SSR] billing_normalize_failed error=', err instanceof Error ? err.message : err);
     throw err;
   }
 }

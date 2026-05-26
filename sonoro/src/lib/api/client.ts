@@ -172,7 +172,8 @@ export async function createCheckoutSession(
 }
 
 export async function createPortalSession() {
-  const { data } = await api.post('/billing/portal');
+  const return_url = `${window.location.origin}/dashboard/billing`;
+  const { data } = await api.post('/billing/portal', { return_url });
   return data as { url: string };
 }
 
