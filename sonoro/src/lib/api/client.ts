@@ -186,6 +186,16 @@ export async function getChapters(documentId: string) {
   return data;
 }
 
+export async function renameChapter(documentId: string, chapterId: string, title: string) {
+  const { data } = await api.patch(`/documents/${documentId}/chapters/${chapterId}`, { title });
+  return data as { id: string; title: string };
+}
+
+export async function deleteChapter(documentId: string, chapterId: string) {
+  const { data } = await api.delete(`/documents/${documentId}/chapters/${chapterId}`);
+  return data as { deleted: boolean; id: string };
+}
+
 // ── Billing ──────────────────────────────────────────────────────────────────
 
 export async function getAccountOverview() {
@@ -230,6 +240,28 @@ function setTokens(accessToken: string, refreshToken: string) {
 function clearTokens() {
   Cookies.remove('access_token');
   Cookies.remove('refresh_token');
+}
+
+// Module-level blob URL cache — persists for the browser session
+const _previewBlobCache = new Map<string, string>();
+
+/**
+ * Generate and cache a short TTS audio preview for a voice.
+ * Returns a blob URL suitable for use with `new Audio(url)`.
+ * Throws if the API is unavailable; caller should show an error state.
+ */
+export async function previewVoice(voiceId: string, languageCode: string): Promise<string> {
+  const key = `${voiceId}:${languageCode}`;
+  const cached = _previewBlobCache.get(key);
+  if (cached) return cached;
+
+  const response = await api.get('/voices/preview', {
+    params:       { voice_id: voiceId, language_code: languageCode },
+    responseType: 'blob',
+  });
+  const blobUrl = URL.createObjectURL(response.data as Blob);
+  _previewBlobCache.set(key, blobUrl);
+  return blobUrl;
 }
 
 export function getErrorMessage(err: unknown): string {

@@ -699,6 +699,100 @@ async def get_document_chapters(
 
 
 # ============================================
+# CHAPTER MANAGEMENT ENDPOINTS
+# ============================================
+
+from pydantic import BaseModel as PydanticBaseModel
+
+class ChapterRenameRequest(PydanticBaseModel):
+    title: str
+
+
+@router.patch(
+    "/{document_id}/chapters/{chapter_id}",
+    summary="Rename Chapter",
+    description="Update the title of a chapter.",
+)
+async def rename_chapter(
+    document_id: UUID,
+    chapter_id: UUID,
+    body: ChapterRenameRequest,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    from app.db.models.document import Document as DocumentModel
+    from app.db.models.chapter import Chapter as ChapterModel
+
+    # Verify document ownership
+    doc_result = await db.execute(
+        select(DocumentModel).where(
+            DocumentModel.id == document_id,
+            DocumentModel.user_id == current_user.id,
+        )
+    )
+    if not doc_result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    ch_result = await db.execute(
+        select(ChapterModel).where(
+            ChapterModel.id == chapter_id,
+            ChapterModel.document_id == document_id,
+        )
+    )
+    chapter = ch_result.scalar_one_or_none()
+    if not chapter:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chapter not found")
+
+    title = body.title.strip()
+    if not title:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Title cannot be empty")
+
+    chapter.title = title
+    await db.commit()
+    logger.info("[SONORO] chapter_renamed document_id=%s chapter_id=%s", document_id, chapter_id)
+    return {"id": str(chapter.id), "title": chapter.title}
+
+
+@router.delete(
+    "/{document_id}/chapters/{chapter_id}",
+    summary="Remove Chapter",
+    description="Remove a chapter from a completed audiobook.",
+)
+async def delete_chapter(
+    document_id: UUID,
+    chapter_id: UUID,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    from app.db.models.document import Document as DocumentModel
+    from app.db.models.chapter import Chapter as ChapterModel
+
+    doc_result = await db.execute(
+        select(DocumentModel).where(
+            DocumentModel.id == document_id,
+            DocumentModel.user_id == current_user.id,
+        )
+    )
+    if not doc_result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    ch_result = await db.execute(
+        select(ChapterModel).where(
+            ChapterModel.id == chapter_id,
+            ChapterModel.document_id == document_id,
+        )
+    )
+    chapter = ch_result.scalar_one_or_none()
+    if not chapter:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chapter not found")
+
+    await db.delete(chapter)
+    await db.commit()
+    logger.info("[SONORO] chapter_deleted document_id=%s chapter_id=%s", document_id, chapter_id)
+    return {"deleted": True, "id": str(chapter_id)}
+
+
+# ============================================
 # INFO ENDPOINT
 # ============================================
 

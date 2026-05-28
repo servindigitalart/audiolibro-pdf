@@ -3,6 +3,7 @@ import type { Document } from '@/lib/api/types';
 import { deleteDocument, retryProcessing, getErrorMessage } from '@/lib/api/client';
 import { fmtRelative, fmtFileSize } from '@/lib/utils';
 import { cn } from '@/lib/utils';
+import BookCover from '@/components/ui/BookCover';
 
 const STATUS_CONFIG = {
   pending:    { label: 'Queued',     cls: 'badge-neutral', dot: 'bg-sonoro-400'  },
@@ -82,11 +83,9 @@ export default function DocumentList({ initialDocuments }: Props) {
             )}
             style={{ animationDelay: `${listIdx * 40}ms` }}
           >
-            {/* Document type icon */}
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-50 border border-red-100 transition-transform duration-200 group-hover:scale-105">
-              <svg className="w-5 h-5 text-red-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd"/>
-              </svg>
+            {/* Book cover */}
+            <div className="shrink-0 transition-transform duration-200 group-hover:scale-105">
+              <BookCover title={title} size="sm" />
             </div>
 
             {/* Document info */}

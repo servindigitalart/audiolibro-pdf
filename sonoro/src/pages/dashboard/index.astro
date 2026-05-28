@@ -1,6 +1,8 @@
 ---
 import DashboardLayout from '@/layouts/DashboardLayout.astro';
 import DocumentList from '@/components/dashboard/DocumentList';
+import ContinueListening from '@/components/dashboard/ContinueListening';
+import ListeningHistory from '@/components/dashboard/ListeningHistory';
 import { fetchDocuments, fetchAccountOverview } from '@/lib/api/server';
 
 const token = (Astro.locals as any).token as string;
@@ -179,6 +181,16 @@ const name     = user?.email?.split('@')[0] ?? null;
         </a>
       </div>
     </div>
+  )}
+
+  <!-- Continue listening (reads localStorage, client-only) -->
+  {docList.some(d => d.status === 'completed') && (
+    <ContinueListening client:load />
+  )}
+
+  <!-- Listening history (reads localStorage, client-only) -->
+  {docList.some(d => d.status === 'completed') && (
+    <ListeningHistory client:load />
   )}
 
   <!-- Document library -->

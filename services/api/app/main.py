@@ -174,6 +174,7 @@ from app.routers.events import router as events_router  # Analytics event ingest
 from app.pricing.router import public_router as pricing_public_router  # Pricing tier catalog
 from app.pricing.router import internal_router as pricing_internal_router  # Admin pricing
 from app.routers.oauth import router as oauth_router  # Google OAuth exchange
+from app.routers.voices import router as voices_router  # Voice preview samples
 
 # Billing enforcement middleware — feature-flagged, defaults off so existing tests pass
 app.add_middleware(BillingEnforcementMiddleware)
@@ -192,6 +193,7 @@ app.include_router(events_router)  # Frontend analytics event ingestion
 app.include_router(pricing_public_router)  # Public pricing tier catalog
 app.include_router(pricing_internal_router)  # Admin pricing + economics
 app.include_router(oauth_router)  # Google OAuth exchange
+app.include_router(voices_router)  # Voice preview samples
 
 
 # Startup event log

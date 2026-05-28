@@ -2,6 +2,7 @@
 import BaseLayout from './BaseLayout.astro';
 import DashboardSidebar from '@/components/nav/DashboardSidebar.astro';
 import DashboardHeader from '@/components/nav/DashboardHeader.astro';
+import MiniPlayer from '@/components/dashboard/MiniPlayer';
 import { fetchAccountOverview } from '@/lib/api/server';
 
 export interface Props {
@@ -32,9 +33,13 @@ const usage = overview?.usage ?? null;
     <div class="flex flex-1 flex-col overflow-hidden">
       <DashboardHeader user={user} />
 
-      <main class="flex-1 overflow-y-auto p-6 md:p-8">
+      <!-- Extra bottom padding so content doesn't hide behind mini-player -->
+      <main class="flex-1 overflow-y-auto p-6 md:p-8 pb-24">
         <slot />
       </main>
     </div>
   </div>
+
+  <!-- Sticky mini-player — reads localStorage, client-only -->
+  <MiniPlayer client:load />
 </BaseLayout>

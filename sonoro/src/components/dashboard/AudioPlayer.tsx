@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
 import type { Chapter } from '@/lib/api/types';
 import { useAudioPlayer } from '@/hooks/useAudioPlayer';
+import { usePlaybackProgress } from '@/hooks/usePlaybackProgress';
 import { fmtDuration } from '@/lib/utils';
 import { cn } from '@/lib/utils';
+import BookCover from '@/components/ui/BookCover';
 
 // Deterministic waveform heights — two overlapping sine waves give a natural shape
 const WAVEFORM = Array.from({ length: 60 }, (_, i) =>
@@ -11,9 +13,39 @@ const WAVEFORM = Array.from({ length: 60 }, (_, i) =>
 
 const SPEEDS = [0.75, 1, 1.25, 1.5, 2];
 
+// Sleep timer options in minutes (0 = off)
+const SLEEP_OPTIONS = [0, 15, 30, 45, 60] as const;
+type SleepOption = typeof SLEEP_OPTIONS[number];
+
+// Ambient palette colours derived from BookCover palettes — same deterministic hash
+const AMBIENT_PALETTES = [
+  { from: '#D97706', to: '#92400E' },
+  { from: '#1D4ED8', to: '#1E3A5F' },
+  { from: '#059669', to: '#064E3B' },
+  { from: '#7C3AED', to: '#3B0764' },
+  { from: '#DB2777', to: '#831843' },
+  { from: '#0891B2', to: '#164E63' },
+  { from: '#4F46E5', to: '#1E1B4B' },
+  { from: '#B45309', to: '#78350F' },
+  { from: '#0F766E', to: '#042F2E' },
+  { from: '#6D28D9', to: '#2E1065' },
+];
+
+function hashString(s: string): number {
+  let h = 0;
+  for (const c of s) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return h;
+}
+
+function getAmbient(title: string) {
+  return AMBIENT_PALETTES[hashString(title) % AMBIENT_PALETTES.length];
+}
+
 interface Props {
   chapters:      Chapter[];
   documentTitle: string;
+  documentId?:   string;
+  autoplay?:     boolean;
 }
 
 // ── Waveform ─────────────────────────────────────────────────────────────────
@@ -128,6 +160,8 @@ function SeekBar({
     (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
   }
 
+  const remaining = duration > 0 ? Math.max(0, duration - currentTime) : 0;
+
   return (
     <div className="select-none touch-none">
       {/* Hit area + track */}
@@ -141,7 +175,7 @@ function SeekBar({
         {/* Track */}
         <div className="absolute inset-x-0 h-1 bg-sonoro-200 rounded-full overflow-hidden">
           <div
-            className="h-full bg-sonoro-amber rounded-full"
+            className="h-full bg-sonoro-amber rounded-full transition-all duration-75"
             style={{ width: `${progress * 100}%` }}
           />
         </div>
@@ -155,7 +189,9 @@ function SeekBar({
       {/* Time labels */}
       <div className="flex justify-between mt-1.5">
         <span className="text-xs text-sonoro-muted tabular-nums">{fmtDuration(currentTime)}</span>
-        <span className="text-xs text-sonoro-muted tabular-nums">{duration > 0 ? fmtDuration(duration) : '--:--'}</span>
+        <span className="text-xs text-sonoro-muted tabular-nums">
+          {remaining > 0 ? `–${fmtDuration(remaining)}` : duration > 0 ? fmtDuration(duration) : '--:--'}
+        </span>
       </div>
     </div>
   );
@@ -330,6 +366,80 @@ function GeneratingState() {
   );
 }
 
+// ── Completion overlay ────────────────────────────────────────────────────────
+function CompletionOverlay({
+  chapters,
+  documentTitle,
+  documentId,
+  totalListeningTime,
+  onListenAgain,
+}: {
+  chapters:          Chapter[];
+  documentTitle:     string;
+  documentId:        string;
+  totalListeningTime: number;
+  onListenAgain:     () => void;
+}) {
+  const ambient = getAmbient(documentTitle);
+  const completedCount = chapters.filter(c => c.status === 'completed').length;
+
+  return (
+    <div className="card-base overflow-hidden animate-fade-in relative">
+      {/* Ambient glow */}
+      <div
+        className="absolute inset-0 pointer-events-none opacity-[0.08]"
+        style={{ background: `radial-gradient(ellipse at 50% 20%, ${ambient.from}, transparent 70%)` }}
+        aria-hidden="true"
+      />
+
+      <div className="relative flex flex-col items-center py-10 px-8 text-center">
+        {/* Book cover */}
+        <BookCover title={documentTitle} size="lg" className="mb-5 shadow-amber" />
+
+        {/* Completion star */}
+        <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-sonoro-amber/10 ring-4 ring-sonoro-amber/20">
+          <svg className="w-5 h-5 text-sonoro-amber" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clipRule="evenodd"/>
+          </svg>
+        </div>
+
+        <h2 className="text-lg font-bold text-sonoro-900 mb-1">Finished listening</h2>
+        <p className="text-sm text-sonoro-muted mb-6 leading-relaxed max-w-xs">
+          You completed <span className="text-sonoro-900 font-medium">{documentTitle}</span>
+        </p>
+
+        {/* Stats */}
+        <div className="flex items-center gap-6 mb-8">
+          <div className="text-center">
+            <p className="text-xl font-bold text-sonoro-900 tabular-nums">
+              {totalListeningTime > 0 ? fmtDuration(totalListeningTime) : '—'}
+            </p>
+            <p className="text-[11px] text-sonoro-muted mt-0.5">Listening time</p>
+          </div>
+          <div className="w-px h-8 bg-sonoro-border" aria-hidden="true" />
+          <div className="text-center">
+            <p className="text-xl font-bold text-sonoro-900 tabular-nums">{completedCount}</p>
+            <p className="text-[11px] text-sonoro-muted mt-0.5">Chapters</p>
+          </div>
+        </div>
+
+        {/* CTAs */}
+        <div className="flex flex-col gap-3 w-full max-w-xs">
+          <button
+            onClick={onListenAgain}
+            className="btn-primary w-full justify-center"
+          >
+            Listen again
+          </button>
+          <a href="/dashboard/upload" className="btn-outline w-full justify-center">
+            Upload next PDF →
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Immersive overlay ────────────────────────────────────────────────────────
 function ImmersiveOverlay({
   chapters,
@@ -346,30 +456,33 @@ function ImmersiveOverlay({
 }) {
   const { currentIdx, isPlaying, currentTime, duration, progress, speed, volume, isMuted, isBuffering } = state;
   const chapter = chapters[currentIdx];
+  const ambient = getAmbient(documentTitle);
+  const remaining = duration > 0 ? Math.max(0, duration - currentTime) : 0;
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-sonoro-black/96 backdrop-blur-md"
+      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto"
+      style={{ background: '#0C0B0A' }}
       role="dialog"
       aria-modal="true"
       aria-label="Immersive listening mode"
     >
-      {/* Ambient orbs */}
+      {/* Ambient background orbs — derived from book palette */}
       <div
-        className="absolute top-[-20%] right-[-10%] w-[700px] h-[700px] pointer-events-none animate-float"
-        style={{ background: 'radial-gradient(ellipse, rgba(245,158,11,0.12) 0%, transparent 65%)', filter: 'blur(40px)' }}
+        className="absolute top-[-15%] right-[-10%] w-[600px] h-[600px] pointer-events-none animate-float"
+        style={{ background: `radial-gradient(ellipse, ${ambient.from}20 0%, transparent 65%)`, filter: 'blur(60px)' }}
         aria-hidden="true"
       />
       <div
         className="absolute bottom-[-20%] left-[-10%] w-[500px] h-[500px] pointer-events-none animate-float-delayed"
-        style={{ background: 'radial-gradient(ellipse, rgba(245,158,11,0.07) 0%, transparent 65%)', filter: 'blur(40px)' }}
+        style={{ background: `radial-gradient(ellipse, ${ambient.to}14 0%, transparent 65%)`, filter: 'blur(60px)' }}
         aria-hidden="true"
       />
 
       {/* Close */}
       <button
         onClick={onClose}
-        className="absolute top-6 right-6 flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white/70 hover:bg-white/20 hover:text-white transition-colors"
+        className="absolute top-5 right-5 flex h-9 w-9 items-center justify-center rounded-full bg-white/8 text-white/60 hover:bg-white/15 hover:text-white transition-colors"
         aria-label="Exit immersive mode"
       >
         <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -377,36 +490,53 @@ function ImmersiveOverlay({
         </svg>
       </button>
 
-      <div className="relative w-full max-w-4xl mx-6 grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-4 animate-fade-in">
-        {/* Chapter list */}
-        {chapters.length > 1 && (
-          <div className="hidden lg:flex flex-col">
-            <p className="label-sm text-white/40 px-5 mb-3">Chapters</p>
-            <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] overflow-hidden">
-              <ChapterList
-                chapters={chapters}
-                currentIdx={currentIdx}
-                isPlaying={isPlaying}
-                onSelect={actions.goToChapter}
-                dark
-              />
-            </div>
-          </div>
-        )}
+      <div className="relative w-full max-w-4xl mx-5 py-12 grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-5 animate-fade-in">
 
-        {/* Player */}
+        {/* Left — cover + chapter list */}
+        <div className="flex flex-col items-center gap-5">
+          {/* Large cover art */}
+          <div className="animate-scale-in" style={{ animationDelay: '60ms', animationFillMode: 'both' }}>
+            <BookCover title={documentTitle} size="lg" className="shadow-modal" />
+          </div>
+
+          {/* Chapter list */}
+          {chapters.length > 1 && (
+            <div className="w-full hidden lg:block">
+              <p className="label-sm text-white/35 px-5 mb-2">Chapters</p>
+              <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] overflow-hidden">
+                <ChapterList
+                  chapters={chapters}
+                  currentIdx={currentIdx}
+                  isPlaying={isPlaying}
+                  onSelect={actions.goToChapter}
+                  dark
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Right — player */}
         <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] overflow-hidden">
           {/* Now playing header */}
-          <div className="px-7 pt-7 pb-5">
-            <p className="label-sm text-white/40 mb-3">Now playing</p>
+          <div className="px-7 pt-7 pb-5 border-b border-white/[0.06]">
+            <p className="label-sm text-white/35 mb-3">Now playing</p>
             <p className="text-2xl font-bold text-white tracking-tight leading-snug mb-1">
               {chapter?.title ?? '—'}
             </p>
-            <p className="text-sm text-white/50">{documentTitle}</p>
+            <div className="flex items-center gap-2">
+              <p className="text-sm text-white/45">{documentTitle}</p>
+              {remaining > 0 && (
+                <>
+                  <span className="text-white/20 text-xs" aria-hidden="true">·</span>
+                  <p className="text-xs text-white/35 tabular-nums">–{fmtDuration(remaining)} left</p>
+                </>
+              )}
+            </div>
           </div>
 
           {/* Waveform */}
-          <div className="px-7 pb-2">
+          <div className="px-7 py-5">
             <Waveform progress={progress} isPlaying={isPlaying} onSeek={actions.seek} />
           </div>
 
@@ -451,7 +581,7 @@ function ImmersiveOverlay({
             </div>
 
             {/* Main controls */}
-            <div className="flex items-center justify-center gap-5">
+            <div className="flex items-center justify-center gap-6">
               <button
                 onClick={actions.prevChapter}
                 disabled={currentIdx === 0}
@@ -477,20 +607,20 @@ function ImmersiveOverlay({
               <button
                 onClick={actions.togglePlay}
                 disabled={!chapter?.audio_url}
-                className="flex h-14 w-14 items-center justify-center rounded-full bg-white text-sonoro-black hover:bg-sonoro-100 active:scale-95 transition-all shadow-lg disabled:opacity-40"
+                className="flex h-16 w-16 items-center justify-center rounded-full bg-white text-sonoro-black hover:bg-sonoro-100 active:scale-95 transition-all shadow-lg disabled:opacity-40"
                 aria-label={isPlaying ? 'Pause' : 'Play'}
               >
                 {isBuffering ? (
-                  <svg className="w-5 h-5 animate-spin text-sonoro-400" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <svg className="w-6 h-6 animate-spin text-sonoro-400" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                     <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity=".2"/>
                     <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
                   </svg>
                 ) : isPlaying ? (
-                  <svg className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                  <svg className="w-6 h-6" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                     <path d="M5.75 3a.75.75 0 0 0-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 0 0 .75-.75V3.75A.75.75 0 0 0 7.25 3h-1.5ZM12.75 3a.75.75 0 0 0-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 0 0 .75-.75V3.75a.75.75 0 0 0-.75-.75h-1.5Z"/>
                   </svg>
                 ) : (
-                  <svg className="w-5 h-5 translate-x-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                  <svg className="w-6 h-6 translate-x-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                     <path d="M6.3 2.84A1.5 1.5 0 0 0 4 4.11v11.78a1.5 1.5 0 0 0 2.3 1.27l9.344-5.891a1.5 1.5 0 0 0 0-2.538L6.3 2.841Z"/>
                   </svg>
                 )}
@@ -523,19 +653,163 @@ function ImmersiveOverlay({
       </div>
 
       {/* Keyboard hint */}
-      <p className="absolute bottom-5 text-[10px] text-white/20 tracking-wide select-none">
+      <p className="absolute bottom-4 text-[10px] text-white/18 tracking-wide select-none">
         Space · ← → seek · Shift+← → chapters · M mute · Esc exit
       </p>
     </div>
   );
 }
 
+// ── Sleep timer control ───────────────────────────────────────────────────────
+function SleepTimer({
+  sleepMinutes,
+  sleepRemaining,
+  onSelect,
+  dark = false,
+}: {
+  sleepMinutes:   SleepOption;
+  sleepRemaining: number;
+  onSelect:       (m: SleepOption) => void;
+  dark?:          boolean;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={cn(
+          'flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-1.5 rounded-full border transition-all',
+          sleepMinutes > 0
+            ? dark
+              ? 'bg-sonoro-amber/20 border-sonoro-amber/40 text-sonoro-amber'
+              : 'bg-sonoro-amber-light border-sonoro-amber/40 text-sonoro-amber-dark'
+            : dark
+            ? 'border-white/15 text-white/40 hover:text-white/70'
+            : 'border-sonoro-border text-sonoro-400 hover:text-sonoro-700 hover:border-sonoro-300',
+        )}
+        aria-label={sleepMinutes > 0 ? `Sleep timer: ${Math.ceil(sleepRemaining / 60)} min left` : 'Set sleep timer'}
+      >
+        <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+          <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zm.75 2.5a.75.75 0 0 0-1.5 0V8c0 .199.079.39.22.53l2.5 2.5a.75.75 0 1 0 1.06-1.06L8.75 7.69V5z"/>
+        </svg>
+        {sleepMinutes > 0 ? `${Math.ceil(sleepRemaining / 60)}m` : 'Sleep'}
+      </button>
+
+      {open && (
+        <div
+          className={cn(
+            'absolute bottom-full right-0 mb-2 z-20 rounded-2xl border shadow-lg overflow-hidden',
+            dark ? 'bg-sonoro-900 border-white/10' : 'bg-white border-sonoro-border',
+          )}
+        >
+          <p className={cn(
+            'px-4 pt-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wider',
+            dark ? 'text-white/40' : 'text-sonoro-400',
+          )}>
+            Sleep timer
+          </p>
+          {SLEEP_OPTIONS.map(m => (
+            <button
+              key={m}
+              onClick={() => { onSelect(m); setOpen(false); }}
+              className={cn(
+                'flex w-full items-center gap-2 px-4 py-2.5 text-xs transition-colors text-left',
+                sleepMinutes === m
+                  ? dark ? 'text-sonoro-amber' : 'text-sonoro-amber-dark font-semibold'
+                  : dark ? 'text-white/70 hover:bg-white/5' : 'text-sonoro-700 hover:bg-sonoro-surface',
+              )}
+            >
+              {m === 0 ? 'Off' : `${m} minutes`}
+              {sleepMinutes === m && (
+                <svg className="ml-auto w-3.5 h-3.5 text-sonoro-amber shrink-0" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true">
+                  <path fillRule="evenodd" d="M7 14A7 7 0 1 0 7 0a7 7 0 0 0 0 14zm3.5-8.7a.75.75 0 0 0-1.2-.9L6.15 8.52 4.78 7.22a.75.75 0 1 0-1.06 1.06l2 1.75a.75.75 0 0 0 1.12-.08l3.66-4.65Z" clipRule="evenodd"/>
+                </svg>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main AudioPlayer ──────────────────────────────────────────────────────────
-export default function AudioPlayer({ chapters, documentTitle }: Props) {
+export default function AudioPlayer({ chapters, documentTitle, documentId = '', autoplay = false }: Props) {
   const { audioRef, chapter, state, actions, audioProps } = useAudioPlayer({ chapters });
-  const [immersive, setImmersive] = useState(false);
+  const [immersive,      setImmersive]      = useState(false);
+  const [isCompleted,    setIsCompleted]    = useState(false);
+  const [sleepMinutes,   setSleepMinutes]   = useState<SleepOption>(0);
+  const [sleepRemaining, setSleepRemaining] = useState(0);
 
   const { currentIdx, isPlaying, currentTime, duration, progress, speed, volume, isMuted, isBuffering } = state;
+
+  const totalDuration = chapters.reduce((acc, ch) => acc + (ch.duration_seconds ?? 0), 0) || duration;
+
+  // Persist playback progress — includes chapter title now
+  usePlaybackProgress(
+    documentId,
+    documentTitle,
+    currentIdx,
+    chapter?.title ?? '',
+    currentTime,
+    totalDuration,
+    isPlaying,
+  );
+
+  // Autoplay on mount when navigated with ?autoplay=1
+  useEffect(() => {
+    if (!autoplay) return;
+    const audio = audioRef.current;
+    const url = chapter?.audio_url;
+    if (!audio || !url) return;
+    audio.play().catch(() => {});
+    // actions.togglePlay not needed — the hook's load-effect handles it,
+    // but we need to ensure isPlaying state is set
+    // Delay slightly to let the audio element initialize
+    const t = setTimeout(() => {
+      if (audio.paused) audio.play().catch(() => {});
+    }, 300);
+    return () => clearTimeout(t);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Detect completion — last chapter ended
+  const originalOnEnded = audioProps.onEnded;
+  const patchedAudioProps = {
+    ...audioProps,
+    onEnded: () => {
+      const next = currentIdx + 1;
+      const hasNext = next < chapters.length && !!chapters[next]?.audio_url;
+      if (!hasNext) {
+        setIsCompleted(true);
+        console.log('[SONORO] playback_completed', documentId);
+      }
+      originalOnEnded();
+    },
+  };
+
+  // Sleep timer countdown
+  useEffect(() => {
+    if (sleepMinutes === 0) { setSleepRemaining(0); return; }
+    setSleepRemaining(sleepMinutes * 60);
+  }, [sleepMinutes]);
+
+  useEffect(() => {
+    if (!isPlaying || sleepRemaining <= 0) return;
+    const interval = setInterval(() => {
+      setSleepRemaining(prev => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          actions.togglePlay();
+          setSleepMinutes(0);
+          console.log('[SONORO] sleep_timer_triggered');
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isPlaying, sleepRemaining > 0]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ESC to close immersive mode
   useEffect(() => {
@@ -557,34 +831,62 @@ export default function AudioPlayer({ chapters, documentTitle }: Props) {
 
   if (completedChapters.length === 0) return <GeneratingState />;
 
+  // Show completion overlay when last chapter finished
+  if (isCompleted) {
+    return (
+      <CompletionOverlay
+        chapters={chapters}
+        documentTitle={documentTitle}
+        documentId={documentId}
+        totalListeningTime={totalDuration}
+        onListenAgain={() => {
+          setIsCompleted(false);
+          actions.goToChapter(0);
+        }}
+      />
+    );
+  }
+
   const hasAudio = !!chapter?.audio_url;
+  const remaining = duration > 0 ? Math.max(0, duration - currentTime) : 0;
 
   return (
     <>
       {/* Hidden audio element — lives outside any conditional rendering */}
-      <audio ref={audioRef} preload="metadata" {...audioProps} />
+      <audio ref={audioRef} preload="metadata" {...patchedAudioProps} />
 
       <div className="card-base overflow-hidden animate-fade-in">
-        {/* Amber top accent */}
+        {/* Amber top accent — progress stripe */}
         <div
-          className="h-0.5 w-full"
+          className="h-0.5 w-full transition-all duration-150"
           style={{ background: `linear-gradient(90deg, #D97706 ${progress * 100}%, #E8E7E3 ${progress * 100}%)` }}
           aria-hidden="true"
         />
 
         {/* Header: now playing */}
         <div className="flex items-start justify-between gap-4 px-6 pt-5 pb-4 border-b border-sonoro-border">
-          <div className="min-w-0">
-            <p className="label-sm mb-1.5">Now playing</p>
-            <p className="text-sm font-bold text-sonoro-900 truncate leading-snug">
-              {chapter?.title ?? (hasAudio ? '—' : 'No audio available')}
-            </p>
-            <p className="text-xs text-sonoro-muted mt-0.5 truncate">{documentTitle}</p>
+          <div className="flex items-center gap-3 min-w-0">
+            <BookCover title={documentTitle} size="sm" />
+            <div className="min-w-0">
+              <p className="label-sm mb-1">Now playing</p>
+              <p className="text-sm font-bold text-sonoro-900 truncate leading-snug">
+                {chapter?.title ?? (hasAudio ? '—' : 'No audio available')}
+              </p>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <p className="text-xs text-sonoro-muted truncate">{documentTitle}</p>
+                {remaining > 0 && (
+                  <>
+                    <span className="text-sonoro-300 text-[10px]" aria-hidden="true">·</span>
+                    <p className="text-xs text-sonoro-muted tabular-nums shrink-0">–{fmtDuration(remaining)}</p>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
 
           {/* Immersive toggle */}
           <button
-            onClick={() => setImmersive(true)}
+            onClick={() => { setImmersive(true); console.log('[SONORO] player_opened', documentId); }}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-sonoro-muted hover:text-sonoro-900 hover:bg-sonoro-surface transition-colors"
             aria-label="Open immersive listening mode"
             title="Immersive mode"
@@ -612,7 +914,7 @@ export default function AudioPlayer({ chapters, documentTitle }: Props) {
 
         {/* Controls row */}
         <div className="px-6 pb-5">
-          {/* Speed */}
+          {/* Speed + volume + sleep timer */}
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-1">
               {SPEEDS.map(s => (
@@ -632,12 +934,19 @@ export default function AudioPlayer({ chapters, documentTitle }: Props) {
               ))}
             </div>
 
-            <VolumeControl
-              volume={volume}
-              isMuted={isMuted}
-              onToggleMute={actions.toggleMute}
-              onVolumeChange={actions.setVolume}
-            />
+            <div className="flex items-center gap-2">
+              <SleepTimer
+                sleepMinutes={sleepMinutes}
+                sleepRemaining={sleepRemaining}
+                onSelect={setSleepMinutes}
+              />
+              <VolumeControl
+                volume={volume}
+                isMuted={isMuted}
+                onToggleMute={actions.toggleMute}
+                onVolumeChange={actions.setVolume}
+              />
+            </div>
           </div>
 
           {/* Transport controls */}
@@ -667,7 +976,10 @@ export default function AudioPlayer({ chapters, documentTitle }: Props) {
 
             {/* Play / Pause */}
             <button
-              onClick={actions.togglePlay}
+              onClick={() => {
+                if (!isPlaying) console.log('[SONORO] player_started', documentId);
+                actions.togglePlay();
+              }}
               disabled={!hasAudio}
               className="flex h-12 w-12 items-center justify-center rounded-full bg-sonoro-black text-white hover:bg-sonoro-800 active:scale-95 transition-all shadow-card disabled:opacity-40"
               aria-label={isPlaying ? 'Pause' : 'Play'}

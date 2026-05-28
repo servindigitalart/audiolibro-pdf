@@ -25,10 +25,11 @@ try {
   return Astro.redirect('/dashboard/documents');
 }
 
-const title    = doc?.title || doc?.filename || 'Document';
-const duration = doc?.metadata?.duration_seconds;
-const pages    = doc?.metadata?.pages;
-const chapLen  = chapters.length || doc?.metadata?.chapters;
+const title     = doc?.title || doc?.filename || 'Document';
+const duration  = doc?.metadata?.duration_seconds;
+const pages     = doc?.metadata?.pages;
+const chapLen   = chapters.length || doc?.metadata?.chapters;
+const autoplay  = Astro.url.searchParams.get('autoplay') === '1';
 ---
 
 <DashboardLayout title={`${title} – Sonoro`} activeNav="documents">
@@ -53,6 +54,8 @@ const chapLen  = chapters.length || doc?.metadata?.chapters;
       <AudioPlayer
         chapters={chapters}
         documentTitle={title}
+        documentId={id}
+        autoplay={autoplay}
         client:load
       />
     </div>
