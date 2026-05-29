@@ -27,7 +27,10 @@ export type AnalyticsEventType =
   | 'upgrade_clicked'
   | 'continue_listening_opened'
   | 'player_opened'
-  | 'audiobook_downloaded';
+  | 'audiobook_downloaded'
+  | 'processing_started'
+  | 'processing_completed'
+  | 'processing_stage_changed';
 
 export type SessionSource = 'direct' | 'continue_listening' | 'autoplay';
 

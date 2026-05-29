@@ -78,30 +78,67 @@ function resolveMicrocopy(
   chunks?: { done: number; total: number } | null,
 ): { label: string; desc: string } {
   const r = raw.toLowerCase();
+  // 1-based: "done" = completed chunks, so current = done + 1
   const chunkDesc =
     chunks && chunks.total > 0
-      ? `Generating segment ${chunks.done} of ${chunks.total}`
+      ? `Chapter ${chunks.done + 1} of ${chunks.total}`
       : 'Generating your narration';
 
-  if (r === 'analyzing')           return { label: 'Analyzing document',  desc: 'Reading structure and extracting text' };
-  if (r === 'language_detection')  return { label: 'Detecting language',  desc: 'Choosing the best narration voice' };
-  if (r === 'chapter_detection')   return { label: 'Finding chapters',    desc: 'Finding natural chapter breaks' };
+  if (r === 'analyzing')           return { label: 'Analyzing document',    desc: 'Reading structure and extracting text' };
+  if (r === 'language_detection')  return { label: 'Detecting language',    desc: 'Choosing the best narration voice' };
+  if (r === 'chapter_detection')   return { label: 'Detecting chapters',    desc: 'Finding natural chapter breaks' };
   if (r === 'preparing_narration' || r === 'tts_prepare')
-                                   return { label: 'Preparing narration', desc: 'Preparing clean audio segments' };
+                                   return { label: 'Preparing narration',   desc: 'Setting up audio generation' };
   if (r.startsWith('tts') || r === 'generating_audio')
-                                   return { label: 'Generating audio',    desc: chunkDesc };
+                                   return { label: 'Generating audiobook',  desc: chunkDesc };
   if (r === 'final_assembly' || r === 'assembling')
-                                   return { label: 'Mastering audiobook', desc: 'Assembling and polishing your audiobook' };
+                                   return { label: 'Assembling audiobook',  desc: 'Assembling your audiobook...' };
   if (r === 'upload_finalize' || r === 'finalizing')
-                                   return { label: 'Finalizing',          desc: 'Saving your audiobook to your library' };
+                                   return { label: 'Finalizing',            desc: 'Saving your audiobook to your library' };
 
   // Fallback to 4-step enum
-  if (stage === 'analyzing')          return { label: 'Analyzing document',  desc: 'Reading structure and extracting text' };
-  if (stage === 'detecting_chapters') return { label: 'Finding chapters',    desc: 'Finding natural chapter breaks' };
-  if (stage === 'generating_audio')   return { label: 'Generating audio',    desc: chunkDesc };
-  if (stage === 'finalizing')         return { label: 'Mastering audiobook', desc: 'Assembling your audiobook' };
+  if (stage === 'analyzing')          return { label: 'Analyzing document',   desc: 'Reading structure and extracting text' };
+  if (stage === 'detecting_chapters') return { label: 'Detecting chapters',   desc: 'Finding natural chapter breaks' };
+  if (stage === 'generating_audio')   return { label: 'Generating audiobook', desc: chunkDesc };
+  if (stage === 'finalizing')         return { label: 'Assembling audiobook', desc: 'Assembling your audiobook...' };
 
   return { label: 'Processing', desc: 'Working on your audiobook…' };
+}
+
+// Map a seconds estimate to a confident, non-precise ETA string
+export function formatEtaConfident(secs: number): string {
+  if (secs <= 90)  return 'Usually under 2 minutes';
+  if (secs <= 300) return 'Usually 2–5 minutes';
+  if (secs <= 600) return 'Usually 5–10 minutes';
+  return 'Usually over 10 minutes';
+}
+
+// Weighted progress: maps stage + chunk data to a 0–100 display percentage.
+//   Analyzing 0–14 · Chapter detection 15–24 · Generation 25–85 · Assembly 86–96 · Finalize 97+
+export function weightedProgress(
+  rawStage: string,
+  stage: ProcessStage,
+  backendPct: number,
+  chunks: { done: number; total: number } | null,
+): number {
+  const r = (rawStage || '').toLowerCase();
+  if (r === 'upload_finalize' || r === 'finalizing') return 97;
+  if (r === 'final_assembly'  || r === 'assembling' || stage === 'finalizing') return 90;
+  if (r.startsWith('tts') || r === 'generating_audio' || stage === 'generating_audio') {
+    if (chunks && chunks.total > 0) return Math.round(25 + (chunks.done / chunks.total) * 60);
+    return 25;
+  }
+  if (r === 'chapter_detection' || r === 'detecting_chapters' || stage === 'detecting_chapters') return 20;
+  return Math.min(14, Math.max(0, backendPct));
+}
+
+// Encouraging status copy based on weighted progress thresholds
+export function stageThresholdMessage(weightedPct: number): string {
+  if (weightedPct < 30) return 'Preparing your audiobook';
+  if (weightedPct < 60) return 'Generating audio';
+  if (weightedPct < 85) return 'More than halfway done';
+  if (weightedPct < 95) return 'Assembling audiobook';
+  return 'Final touches';
 }
 
 // Map raw error strings to friendly user copy
@@ -122,6 +159,46 @@ export function mapErrorMessage(raw: string): string {
   if (r.includes('processing failed') || r.includes('celery') || r.includes('task'))
     return 'Audiobook generation failed. Please try again.';
   return raw;
+}
+
+// ── Micro progress indicator ─────────────────────────────────────────────────
+
+function MicroProgress({ done, total }: { done: number; total: number }) {
+  if (total <= 0) return null;
+  type Item = { type: 'done' | 'active' | 'pending'; n: number };
+  const items: Item[] = [];
+  if (done > 0)          items.push({ type: 'done',    n: done });
+  if (done < total)      items.push({ type: 'active',  n: done + 1 });
+  if (done + 1 < total)  items.push({ type: 'pending', n: done + 2 });
+  return (
+    <div className="mt-3 mb-1 space-y-1 text-left max-w-[180px] mx-auto" aria-label="Chapter progress">
+      {items.map(({ type, n }) => (
+        <div key={n} className="flex items-center gap-2">
+          {type === 'done' && (
+            <svg className="w-3.5 h-3.5 text-emerald-500 shrink-0" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+              <path d="M2.5 7l3 3 6-6" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          )}
+          {type === 'active' && (
+            <div className="w-3.5 h-3.5 rounded-full bg-sonoro-amber animate-pulse-slow shrink-0" aria-hidden="true" />
+          )}
+          {type === 'pending' && (
+            <div className="w-3.5 h-3.5 rounded-full border-2 border-sonoro-border shrink-0" aria-hidden="true" />
+          )}
+          <span className={cn(
+            'text-xs leading-none',
+            type === 'done'    ? 'text-sonoro-500'              :
+            type === 'active'  ? 'text-sonoro-900 font-medium'  :
+                                 'text-sonoro-400',
+          )}>
+            {type === 'done'   ? `Chapter ${n} complete`   :
+             type === 'active' ? `Generating chapter ${n}` :
+                                 `Chapter ${n} pending`}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 // ── Visual constants ─────────────────────────────────────────────────────────
@@ -149,8 +226,13 @@ export default function UploadZone() {
   const [chapters, setChapters]           = useState<Chapter[]>([]);
   const [audiobookUrl, setAudiobookUrl]   = useState<string | null>(null);
   const [duplicate, setDuplicate]         = useState<DuplicateInfo | null>(null);
-  const [startingConversion, setStartingConversion] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [startingConversion, setStartingConversion]   = useState(false);
+  const [stuckMessage, setStuckMessage]               = useState<string | null>(null);
+  const [showingCompletion, setShowingCompletion]     = useState(false);
+  const [failedChunks, setFailedChunks]               = useState<{ done: number; total: number } | null>(null);
+  const pollRef         = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastProgressRef = useRef<{ pct: number; time: number }>({ pct: -1, time: Date.now() });
+  const prevStageRef    = useRef<string>('');
 
   // ── Analytics ──────────────────────────────────────────────────────────────
 
@@ -176,7 +258,15 @@ export default function UploadZone() {
       if (job.stage)         setProcessStage(job.stage);
       if (job.current_stage) setRawStage(job.current_stage);
       // Never go backward — clamp to the highest seen value
-      setProcessPct(prev => Math.max(prev, job.progress ?? 0));
+      const newPct = Math.max(0, job.progress ?? 0);
+      setProcessPct(prev => {
+        const next = Math.max(prev, newPct);
+        if (next !== lastProgressRef.current.pct) {
+          lastProgressRef.current = { pct: next, time: Date.now() };
+          setStuckMessage(null);
+        }
+        return next;
+      });
 
       if (job.total_chunks && job.total_chunks > 0) {
         setChunkProgress({ done: job.completed_chunks ?? 0, total: job.total_chunks });
@@ -185,8 +275,26 @@ export default function UploadZone() {
         setEstimatedSecs(job.estimated_seconds_remaining);
       }
 
+      // Analytics: fire processing_stage_changed when the pipeline stage advances
+      const newStage = job.current_stage ?? '';
+      if (newStage && newStage !== prevStageRef.current) {
+        prevStageRef.current = newStage;
+        const chks = job.total_chunks ? { done: job.completed_chunks ?? 0, total: job.total_chunks } : null;
+        track('processing_stage_changed', {
+          stage:            newStage,
+          completed_chunks: job.completed_chunks ?? 0,
+          total_chunks:     job.total_chunks ?? 0,
+          percentage:       weightedProgress(newStage, job.stage, job.progress ?? 0, chks),
+        });
+      }
+
       if (job.status === 'completed') {
         clearInterval(pollRef.current!);
+        track('processing_completed', {
+          completed_chunks: job.completed_chunks ?? 0,
+          total_chunks:     job.total_chunks ?? 0,
+        });
+        setShowingCompletion(true);
         try {
           const [rawChapters, doc] = await Promise.all([
             getChapters(docId!),
@@ -195,10 +303,20 @@ export default function UploadZone() {
           setChapters(Array.isArray(rawChapters) ? rawChapters : (rawChapters?.chapters ?? []));
           if (doc?.audiobook_url) setAudiobookUrl(doc.audiobook_url);
         } catch { /* non-fatal — chapter list just stays empty */ }
-        setStage('ready');
+        setTimeout(() => {
+          setShowingCompletion(false);
+          setStage('ready');
+        }, 1_500);
       } else if (job.status === 'failed') {
         clearInterval(pollRef.current!);
-        setError(mapErrorMessage(job.error_message ?? 'Processing failed. Please try again.'));
+        const doneF  = job.completed_chunks ?? 0;
+        const totalF = job.total_chunks ?? 0;
+        if (doneF > 0 && totalF > 0) {
+          setFailedChunks({ done: doneF, total: totalF });
+          setError("We couldn't finish this audiobook.");
+        } else {
+          setError(mapErrorMessage(job.error_message ?? 'Processing failed. Please try again.'));
+        }
         setStage('error');
       }
     }
@@ -207,6 +325,20 @@ export default function UploadZone() {
     pollRef.current = setInterval(poll, 2500);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [stage, docId]);
+
+  // Stuck-job detection: show a reassurance message if progress stalls > 60 s
+  useEffect(() => {
+    if (stage !== 'processing') { setStuckMessage(null); return; }
+    const id = setInterval(() => {
+      const { pct, time } = lastProgressRef.current;
+      if (pct > 0 && pct < 95 && Date.now() - time > 60_000) {
+        setStuckMessage(
+          'This chapter is taking longer than usual. Your audiobook is still being generated.'
+        );
+      }
+    }, 5_000);
+    return () => clearInterval(id);
+  }, [stage]);
 
   // ── Upload handler ─────────────────────────────────────────────────────────
 
@@ -281,6 +413,11 @@ export default function UploadZone() {
     setAudiobookUrl(null);
     setDuplicate(null);
     setStartingConversion(false);
+    setStuckMessage(null);
+    setShowingCompletion(false);
+    setFailedChunks(null);
+    lastProgressRef.current = { pct: -1, time: Date.now() };
+    prevStageRef.current    = '';
   }
 
   // ── Preflight ──────────────────────────────────────────────────────────────
@@ -308,7 +445,16 @@ export default function UploadZone() {
       if (!docId) return;
       setStartingConversion(true);
       try {
-        await startProcessing(docId);
+        console.log('[SONORO] narration_style_selected', selectedStyle ?? 'default');
+        await startProcessing(
+          docId,
+          selectedVoice || undefined,
+          selectedStyle || undefined,
+        );
+        track('processing_started', {
+          voice_id:        selectedVoice || null,
+          narration_style: selectedStyle || null,
+        });
         setStage('processing');
       } catch (err) {
         setError(mapErrorMessage(getErrorMessage(err)));
@@ -522,7 +668,13 @@ export default function UploadZone() {
               languageName={preflight.language_name}
               selected={selectedVoice}
               onSelect={setSelectedVoice}
+              narrationStyle={selectedStyle ?? undefined}
             />
+            {selectedStyle && (
+              <p className="mt-1.5 text-[11px] text-sonoro-400 animate-fade-in">
+                Style adjusts pace and tone. Preview reflects your selection.
+              </p>
+            )}
           </div>
 
           {/* Quota bar */}
@@ -753,15 +905,12 @@ export default function UploadZone() {
   // ── Processing ─────────────────────────────────────────────────────────────
 
   if (stage === 'processing') {
-    const visualIdx = resolveVisualStep(rawStage, processStage);
-    const copy      = resolveMicrocopy(rawStage, processStage, chunkProgress);
-
-    const estMins =
-      estimatedSecs != null && estimatedSecs > 0
-        ? estimatedSecs < 60
-          ? 'less than a minute'
-          : `~${Math.ceil(estimatedSecs / 60)} min`
-        : null;
+    const visualIdx    = resolveVisualStep(rawStage, processStage);
+    const copy         = resolveMicrocopy(rawStage, processStage, chunkProgress);
+    const weightedPct  = weightedProgress(rawStage, processStage, processPct, chunkProgress);
+    const thresholdMsg = stageThresholdMessage(weightedPct);
+    const r            = (rawStage || '').toLowerCase();
+    const isGenStage   = r.startsWith('tts') || r === 'generating_audio' || processStage === 'generating_audio';
 
     return (
       <div className="card-base px-8 py-10 text-center relative overflow-hidden">
@@ -782,39 +931,61 @@ export default function UploadZone() {
             ))}
           </div>
 
-          {/* Stage label */}
-          <p className="text-base font-semibold text-sonoro-900 mb-1" aria-live="polite">
-            {copy.label}
-          </p>
-          <p className="text-sm text-sonoro-muted mb-1">{copy.desc}</p>
-
-          {/* ETA */}
-          {estMins ? (
-            <p className="text-xs text-sonoro-400 mb-5">{estMins} remaining</p>
+          {showingCompletion ? (
+            <div className="py-2 animate-scale-in" role="status" aria-label="Audiobook ready">
+              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-50 border border-emerald-200">
+                <svg className="w-6 h-6 text-emerald-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clipRule="evenodd"/>
+                </svg>
+              </div>
+              <p className="text-base font-semibold text-emerald-700 mb-1">Audiobook ready</p>
+              <p className="text-sm text-sonoro-muted">Loading your chapters…</p>
+            </div>
           ) : (
-            <div className="mb-5" />
+            <>
+              {/* Stage label + chunk progress */}
+              <p className="text-base font-semibold text-sonoro-900 mb-1" aria-live="polite">
+                {copy.label}
+              </p>
+              <p className="text-sm text-sonoro-muted mb-1">{copy.desc}</p>
+
+              {/* Per-chapter micro progress indicator */}
+              {isGenStage && chunkProgress && chunkProgress.total > 0 && (
+                <MicroProgress done={chunkProgress.done} total={chunkProgress.total} />
+              )}
+
+              {/* Threshold-based encouragement message */}
+              <p className="text-xs text-sonoro-400 mb-3">{thresholdMsg}</p>
+
+              {/* Stuck-job reassurance */}
+              {stuckMessage && (
+                <p className="text-xs text-sonoro-400 mb-2 animate-fade-in" role="status">
+                  {stuckMessage}
+                </p>
+              )}
+
+              {/* Progress bar — uses weighted percentage */}
+              <div
+                className="relative h-1.5 w-full max-w-xs mx-auto rounded-full bg-sonoro-border overflow-hidden mb-2"
+                role="progressbar"
+                aria-valuenow={weightedPct}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-label={`${weightedPct}% complete`}
+              >
+                <div
+                  className="absolute inset-y-0 left-0 rounded-full transition-all duration-700 ease-out"
+                  style={{
+                    width: `${weightedPct}%`,
+                    background: 'linear-gradient(90deg, #D97706, #F59E0B)',
+                  }}
+                />
+              </div>
+              <p className="text-xs text-sonoro-400 tabular-nums mb-8">{weightedPct}%</p>
+            </>
           )}
 
-          {/* Progress bar */}
-          <div
-            className="relative h-1.5 w-full max-w-xs mx-auto rounded-full bg-sonoro-border overflow-hidden mb-2"
-            role="progressbar"
-            aria-valuenow={processPct}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-label={`${processPct}% complete`}
-          >
-            <div
-              className="absolute inset-y-0 left-0 rounded-full transition-all duration-700 ease-out"
-              style={{
-                width: `${processPct}%`,
-                background: 'linear-gradient(90deg, #D97706, #F59E0B)',
-              }}
-            />
-          </div>
-          <p className="text-xs text-sonoro-400 tabular-nums mb-8">{processPct}%</p>
-
-          {/* 5-step visual timeline */}
+          {/* 5-step visual timeline — always visible */}
           <div className="flex items-start justify-center" role="list" aria-label="Processing stages">
             {VISUAL_STEPS.map((label, i) => {
               const done   = i < visualIdx;
@@ -958,6 +1129,11 @@ export default function UploadZone() {
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold text-red-800 mb-0.5">Something went wrong</p>
             <p className="text-sm text-red-700">{error}</p>
+            {failedChunks && (
+              <p className="text-xs text-red-600 mt-1">
+                Completed {failedChunks.done} of {failedChunks.total} chapters
+              </p>
+            )}
             <button
               onClick={reset}
               className="mt-2 text-xs font-medium text-red-700 underline hover:no-underline focus:outline-none focus:ring-2 focus:ring-red-400 rounded"

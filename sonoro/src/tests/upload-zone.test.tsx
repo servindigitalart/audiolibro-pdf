@@ -5,6 +5,11 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import {
+  formatEtaConfident,
+  weightedProgress,
+  stageThresholdMessage,
+} from '@/components/upload/UploadZone';
 import UploadZone, { mapErrorMessage } from '@/components/upload/UploadZone';
 import * as clientApi from '@/lib/api/client';
 
@@ -245,12 +250,13 @@ describe('UploadZone', () => {
     fireEvent.click(screen.getByRole('button', { name: /start conversion/i }));
 
     await waitFor(() => {
-      expect(screen.getByText('Generating audio')).toBeInTheDocument();
+      expect(screen.getByText('Generating audiobook')).toBeInTheDocument();
     });
-    expect(screen.getByText('Generating segment 12 of 40')).toBeInTheDocument();
+    // 1-based: 12 chunks done → currently on chapter 13
+    expect(screen.getByText('Chapter 13 of 40')).toBeInTheDocument();
   });
 
-  it('shows estimated time remaining when available', async () => {
+  it('shows threshold progress message during generation', async () => {
     mockUpload.mockResolvedValue({
       id: 'doc-5',
       is_duplicate: false,
@@ -269,7 +275,7 @@ describe('UploadZone', () => {
       progress: 40,
       completed_chunks: 8,
       total_chunks: 20,
-      estimated_seconds_remaining: 180, // 3 min
+      // weightedPct = 25 + (8/20 * 60) = 49 → "Generating audio"
     });
 
     render(<UploadZone />);
@@ -277,7 +283,9 @@ describe('UploadZone', () => {
     await waitFor(() => screen.getByRole('button', { name: /start conversion/i }));
     fireEvent.click(screen.getByRole('button', { name: /start conversion/i }));
 
-    await waitFor(() => screen.getByText(/~3 min remaining/i));
+    // Threshold message replaces the old ETA
+    await waitFor(() => screen.getByText('Generating audio'));
+    expect(screen.queryByText(/Usually .+ minutes/i)).not.toBeInTheDocument();
   });
 
   // ── Success / ready state ─────────────────────────────────────────────────
@@ -311,7 +319,7 @@ describe('UploadZone', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/Your audiobook is ready/i)).toBeInTheDocument();
-    });
+    }, { timeout: 4000 });
 
     expect(screen.getByText('Introduction')).toBeInTheDocument();
     expect(screen.getByText('Chapter One')).toBeInTheDocument();
@@ -341,7 +349,7 @@ describe('UploadZone', () => {
     await waitFor(() => screen.getByRole('button', { name: /start conversion/i }));
     fireEvent.click(screen.getByRole('button', { name: /start conversion/i }));
 
-    await waitFor(() => screen.getByRole('link', { name: /download audiobook/i }));
+    await waitFor(() => screen.getByRole('link', { name: /download audiobook/i }), { timeout: 4000 });
     const downloadLink = screen.getByRole('link', { name: /download audiobook/i });
     expect(downloadLink).toHaveAttribute('href', 'https://cdn.sonoro.com/audiobooks/doc-7.mp3');
   });
@@ -369,7 +377,7 @@ describe('UploadZone', () => {
     await waitFor(() => screen.getByRole('button', { name: /start conversion/i }));
     fireEvent.click(screen.getByRole('button', { name: /start conversion/i }));
 
-    await waitFor(() => screen.getByText(/Your audiobook is ready/i));
+    await waitFor(() => screen.getByText(/Your audiobook is ready/i), { timeout: 4000 });
     // 600+1200+900 = 2700s = 45m → fmtDuration(2700) = "45:00"
     expect(screen.getAllByText(/3 chapters/).length).toBeGreaterThan(0);
   });
@@ -427,6 +435,425 @@ describe('UploadZone', () => {
     await waitFor(() => screen.getByRole('alert'));
     // "tts" in error_message → audio generation failed message
     expect(screen.getByText(/Audio generation failed/i)).toBeInTheDocument();
+  });
+
+  // ── Narration style → startProcessing payload ────────────────────────────
+
+  it('sends narration_style and voice_id when style is selected', async () => {
+    mockUpload.mockResolvedValue({
+      id: 'doc-ns1',
+      is_duplicate: false,
+      processing_status: 'pending',
+      can_reprocess: false,
+      duplicate_message: null,
+      preflight: {
+        ...basePreflight,
+        available_voices: [
+          { voice_id: 'v1', display_name: 'Rachel' },
+          { voice_id: 'v2', display_name: 'Charlie' },
+        ],
+      },
+    });
+    mockStart.mockResolvedValue({ job_id: 'job-ns1', status: 'queued' });
+    mockGetJob.mockResolvedValue({ id: 'job-ns1', status: 'processing', progress: 10 });
+
+    render(<UploadZone />);
+    dropFile(testPdf);
+
+    // Wait for the preflight card, then find the style chip
+    await waitFor(() => screen.getByText(/Ready to convert/i));
+
+    // Click the Calm style chip (aria-pressed button)
+    const calmBtn = screen.getByRole('button', { name: /Calm/i });
+    fireEvent.click(calmBtn);
+
+    // Start conversion
+    await waitFor(() => screen.getByRole('button', { name: /start conversion/i }));
+    fireEvent.click(screen.getByRole('button', { name: /start conversion/i }));
+
+    await waitFor(() => expect(mockStart).toHaveBeenCalled());
+
+    const [docId, voiceId, style] = mockStart.mock.calls[0];
+    expect(docId).toBe('doc-ns1');
+    expect(style).toBe('calm');
+    expect(typeof voiceId).toBe('string');
+  });
+
+  it('sends no narration_style when no style is selected', async () => {
+    mockUpload.mockResolvedValue({
+      id: 'doc-ns2',
+      is_duplicate: false,
+      processing_status: 'pending',
+      can_reprocess: false,
+      duplicate_message: null,
+      preflight: basePreflight,
+    });
+    mockStart.mockResolvedValue({ job_id: 'job-ns2', status: 'queued' });
+    mockGetJob.mockResolvedValue({ id: 'job-ns2', status: 'processing', progress: 5 });
+
+    render(<UploadZone />);
+    dropFile(testPdf);
+    await waitFor(() => screen.getByRole('button', { name: /start conversion/i }));
+    fireEvent.click(screen.getByRole('button', { name: /start conversion/i }));
+
+    await waitFor(() => expect(mockStart).toHaveBeenCalled());
+    const [, , style] = mockStart.mock.calls[0];
+    expect(style).toBeUndefined();
+  });
+
+  // ── 1-based chunk indexing ────────────────────────────────────────────────
+
+  it('never shows "segment 0" in the processing view', async () => {
+    mockUpload.mockResolvedValue({
+      id: 'doc-idx1',
+      is_duplicate: false,
+      processing_status: 'pending',
+      can_reprocess: false,
+      duplicate_message: null,
+      preflight: basePreflight,
+    });
+    mockStart.mockResolvedValue({ job_id: 'job-idx1', status: 'queued' });
+    mockGetJob.mockResolvedValue({
+      id: 'job-idx1',
+      status: 'processing',
+      stage: 'generating_audio',
+      current_stage: 'tts_generation',
+      progress: 30,
+      completed_chunks: 0,
+      total_chunks: 4,
+    });
+
+    render(<UploadZone />);
+    dropFile(testPdf);
+    await waitFor(() => screen.getByRole('button', { name: /start conversion/i }));
+    fireEvent.click(screen.getByRole('button', { name: /start conversion/i }));
+
+    await waitFor(() => screen.getByText('Generating audiobook'));
+    // 1-based: 0 done → currently on chapter 1
+    expect(screen.getByText('Chapter 1 of 4')).toBeInTheDocument();
+    expect(screen.queryByText(/segment 0/i)).not.toBeInTheDocument();
+  });
+
+  // ── Stuck-job detection ───────────────────────────────────────────────────
+
+  it('shows stuck-job message after 60 s without progress', async () => {
+    mockUpload.mockResolvedValue({
+      id: 'doc-stuck',
+      is_duplicate: false,
+      processing_status: 'pending',
+      can_reprocess: false,
+      duplicate_message: null,
+      preflight: basePreflight,
+    });
+    mockStart.mockResolvedValue({ job_id: 'job-stuck', status: 'queued' });
+    mockGetJob.mockResolvedValue({
+      id: 'job-stuck',
+      status: 'processing',
+      stage: 'generating_audio',
+      current_stage: 'tts_generation',
+      progress: 40,
+      completed_chunks: 4,
+      total_chunks: 10,
+    });
+
+    render(<UploadZone />);
+    dropFile(testPdf);
+
+    // Use real timers for the async upload/preflight step
+    await waitFor(() => screen.getByRole('button', { name: /start conversion/i }));
+
+    // Enable fake timers before the processing phase so all intervals are faked
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByRole('button', { name: /start conversion/i }));
+
+      // Flush: startProcessing resolves → stage='processing' → polling starts → first poll runs
+      await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+
+      // Advance 65 s — stuck-detection interval fires every 5 s; at 65 s the condition triggers
+      await act(async () => { await vi.advanceTimersByTimeAsync(65_000); });
+
+      expect(screen.getByText(/taking longer than usual/i)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // ── Weighted progress ─────────────────────────────────────────────────────────
+
+  describe('weightedProgress', () => {
+    it('maps generation chunks to 25–85 range', () => {
+      const gen = (done: number) => weightedProgress('tts_generation', 'generating_audio', 40, { done, total: 4 });
+      expect(gen(0)).toBe(25);
+      expect(gen(1)).toBe(40);
+      expect(gen(2)).toBe(55);
+      expect(gen(3)).toBe(70);
+      expect(gen(4)).toBe(85);
+    });
+
+    it('returns 25 when in generation with no chunk data', () => {
+      expect(weightedProgress('tts_generation', 'generating_audio', 40, null)).toBe(25);
+    });
+
+    it('returns 90 for final_assembly stage', () => {
+      expect(weightedProgress('final_assembly', 'finalizing', 90, null)).toBe(90);
+    });
+
+    it('returns 97 for upload_finalize stage', () => {
+      expect(weightedProgress('upload_finalize', undefined, 96, null)).toBe(97);
+    });
+
+    it('returns 20 for chapter_detection stage', () => {
+      expect(weightedProgress('chapter_detection', 'detecting_chapters', 15, null)).toBe(20);
+    });
+
+    it('clamps analyzing to 0–14', () => {
+      expect(weightedProgress('analyzing', 'analyzing', 5, null)).toBe(5);
+      expect(weightedProgress('analyzing', 'analyzing', 20, null)).toBe(14);
+    });
+
+    it('is backward-compatible with unknown stages', () => {
+      const pct = weightedProgress('', undefined, 30, null);
+      expect(pct).toBeGreaterThanOrEqual(0);
+      expect(pct).toBeLessThanOrEqual(100);
+    });
+  });
+
+  // ── Stage threshold messages ───────────────────────────────────────────────────
+
+  describe('stageThresholdMessage', () => {
+    it('returns "Preparing your audiobook" for 0–29%', () => {
+      expect(stageThresholdMessage(0)).toBe('Preparing your audiobook');
+      expect(stageThresholdMessage(29)).toBe('Preparing your audiobook');
+    });
+
+    it('returns "Generating audio" for 30–59%', () => {
+      expect(stageThresholdMessage(30)).toBe('Generating audio');
+      expect(stageThresholdMessage(59)).toBe('Generating audio');
+    });
+
+    it('returns "More than halfway done" for 60–84%', () => {
+      expect(stageThresholdMessage(60)).toBe('More than halfway done');
+      expect(stageThresholdMessage(84)).toBe('More than halfway done');
+    });
+
+    it('returns "Assembling audiobook" for 85–94%', () => {
+      expect(stageThresholdMessage(85)).toBe('Assembling audiobook');
+      expect(stageThresholdMessage(94)).toBe('Assembling audiobook');
+    });
+
+    it('returns "Final touches" for 95–100%', () => {
+      expect(stageThresholdMessage(95)).toBe('Final touches');
+      expect(stageThresholdMessage(100)).toBe('Final touches');
+    });
+  });
+
+  // ── Chapter-level progress copy ────────────────────────────────────────────────
+
+  it('shows "Chapter X of Y" during audio generation', async () => {
+    mockUpload.mockResolvedValue({
+      id: 'doc-ch1', is_duplicate: false, processing_status: 'pending',
+      can_reprocess: false, duplicate_message: null, preflight: basePreflight,
+    });
+    mockStart.mockResolvedValue({ job_id: 'job-ch1', status: 'queued' });
+    mockGetJob.mockResolvedValue({
+      id: 'job-ch1', status: 'processing',
+      stage: 'generating_audio', current_stage: 'tts_generation',
+      progress: 40, completed_chunks: 2, total_chunks: 8,
+    });
+
+    render(<UploadZone />);
+    dropFile(testPdf);
+    await waitFor(() => screen.getByRole('button', { name: /start conversion/i }));
+    fireEvent.click(screen.getByRole('button', { name: /start conversion/i }));
+
+    await waitFor(() => screen.getByText('Chapter 3 of 8'));
+  });
+
+  it('shows "Generating your narration" when chunk data is absent', async () => {
+    mockUpload.mockResolvedValue({
+      id: 'doc-ch2', is_duplicate: false, processing_status: 'pending',
+      can_reprocess: false, duplicate_message: null, preflight: basePreflight,
+    });
+    mockStart.mockResolvedValue({ job_id: 'job-ch2', status: 'queued' });
+    mockGetJob.mockResolvedValue({
+      id: 'job-ch2', status: 'processing',
+      stage: 'generating_audio', current_stage: 'tts_generation',
+      progress: 40,
+      // no completed_chunks / total_chunks — backward compat path
+    });
+
+    render(<UploadZone />);
+    dropFile(testPdf);
+    await waitFor(() => screen.getByRole('button', { name: /start conversion/i }));
+    fireEvent.click(screen.getByRole('button', { name: /start conversion/i }));
+
+    await waitFor(() => screen.getByText('Generating your narration'));
+    expect(screen.queryByText(/Chapter \d+ of/i)).not.toBeInTheDocument();
+  });
+
+  // ── Micro progress indicator ────────────────────────────────────────────────────
+
+  it('shows three-item micro progress during generation', async () => {
+    mockUpload.mockResolvedValue({
+      id: 'doc-mp1', is_duplicate: false, processing_status: 'pending',
+      can_reprocess: false, duplicate_message: null, preflight: basePreflight,
+    });
+    mockStart.mockResolvedValue({ job_id: 'job-mp1', status: 'queued' });
+    mockGetJob.mockResolvedValue({
+      id: 'job-mp1', status: 'processing',
+      stage: 'generating_audio', current_stage: 'tts_generation',
+      progress: 40, completed_chunks: 1, total_chunks: 4,
+    });
+
+    render(<UploadZone />);
+    dropFile(testPdf);
+    await waitFor(() => screen.getByRole('button', { name: /start conversion/i }));
+    fireEvent.click(screen.getByRole('button', { name: /start conversion/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Chapter 1 complete')).toBeInTheDocument();
+      expect(screen.getByText('Generating chapter 2')).toBeInTheDocument();
+      expect(screen.getByText('Chapter 3 pending')).toBeInTheDocument();
+    });
+  });
+
+  it('omits the previous-completed row when no chunks are done yet', async () => {
+    mockUpload.mockResolvedValue({
+      id: 'doc-mp2', is_duplicate: false, processing_status: 'pending',
+      can_reprocess: false, duplicate_message: null, preflight: basePreflight,
+    });
+    mockStart.mockResolvedValue({ job_id: 'job-mp2', status: 'queued' });
+    mockGetJob.mockResolvedValue({
+      id: 'job-mp2', status: 'processing',
+      stage: 'generating_audio', current_stage: 'tts_generation',
+      progress: 25, completed_chunks: 0, total_chunks: 4,
+    });
+
+    render(<UploadZone />);
+    dropFile(testPdf);
+    await waitFor(() => screen.getByRole('button', { name: /start conversion/i }));
+    fireEvent.click(screen.getByRole('button', { name: /start conversion/i }));
+
+    await waitFor(() => screen.getByText('Generating chapter 1'));
+    expect(screen.queryByText(/Chapter 0/i)).not.toBeInTheDocument();
+  });
+
+  // ── Weighted progress bar ─────────────────────────────────────────────────────
+
+  it('progress bar reflects weighted percentage based on chunk data', async () => {
+    mockUpload.mockResolvedValue({
+      id: 'doc-wp1', is_duplicate: false, processing_status: 'pending',
+      can_reprocess: false, duplicate_message: null, preflight: basePreflight,
+    });
+    mockStart.mockResolvedValue({ job_id: 'job-wp1', status: 'queued' });
+    // 2 of 4 chunks done → weightedPct = 25 + 2/4 * 60 = 55
+    mockGetJob.mockResolvedValue({
+      id: 'job-wp1', status: 'processing',
+      stage: 'generating_audio', current_stage: 'tts_generation',
+      progress: 56, completed_chunks: 2, total_chunks: 4,
+    });
+
+    render(<UploadZone />);
+    dropFile(testPdf);
+    await waitFor(() => screen.getByRole('button', { name: /start conversion/i }));
+    fireEvent.click(screen.getByRole('button', { name: /start conversion/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '55');
+    });
+    expect(screen.getByText('55%')).toBeInTheDocument();
+  });
+
+  // ── Completion banner ────────────────────────────────────────────────────────────
+
+  it('shows "Audiobook ready" banner before transitioning to ready state', async () => {
+    mockUpload.mockResolvedValue({
+      id: 'doc-cb1', is_duplicate: false, processing_status: 'pending',
+      can_reprocess: false, duplicate_message: null, preflight: basePreflight,
+    });
+    mockStart.mockResolvedValue({ job_id: 'job-cb1', status: 'queued' });
+    mockGetJob.mockResolvedValue({ id: 'job-cb1', status: 'completed', progress: 100 });
+    mockGetChapters.mockResolvedValue([]);
+    mockGetDocument.mockResolvedValue({ id: 'doc-cb1', audiobook_url: null });
+
+    render(<UploadZone />);
+    dropFile(testPdf);
+    await waitFor(() => screen.getByRole('button', { name: /start conversion/i }));
+    fireEvent.click(screen.getByRole('button', { name: /start conversion/i }));
+
+    // Banner appears first
+    await waitFor(() => screen.getByText('Audiobook ready'));
+    // Then transitions to the full ready state after the 1500 ms delay
+    await waitFor(() => screen.getByText(/Your audiobook is ready/i), { timeout: 4000 });
+  });
+
+  // ── Failure with partial progress ─────────────────────────────────────────────────
+
+  it('shows partial chapter count when generation fails mid-way', async () => {
+    mockUpload.mockResolvedValue({
+      id: 'doc-fp1', is_duplicate: false, processing_status: 'pending',
+      can_reprocess: false, duplicate_message: null, preflight: basePreflight,
+    });
+    mockStart.mockResolvedValue({ job_id: 'job-fp1', status: 'queued' });
+    mockGetJob.mockResolvedValue({
+      id: 'job-fp1', status: 'failed',
+      progress: 60, completed_chunks: 3, total_chunks: 4,
+      error_message: 'TTS quota exceeded',
+    });
+
+    render(<UploadZone />);
+    dropFile(testPdf);
+    await waitFor(() => screen.getByRole('button', { name: /start conversion/i }));
+    fireEvent.click(screen.getByRole('button', { name: /start conversion/i }));
+
+    await waitFor(() => screen.getByRole('alert'));
+    expect(screen.getByText(/couldn't finish/i)).toBeInTheDocument();
+    expect(screen.getByText(/Completed 3 of 4 chapters/i)).toBeInTheDocument();
+  });
+
+  it('shows generic error when job fails before any chunks complete', async () => {
+    mockUpload.mockResolvedValue({
+      id: 'doc-fp2', is_duplicate: false, processing_status: 'pending',
+      can_reprocess: false, duplicate_message: null, preflight: basePreflight,
+    });
+    mockStart.mockResolvedValue({ job_id: 'job-fp2', status: 'queued' });
+    mockGetJob.mockResolvedValue({
+      id: 'job-fp2', status: 'failed',
+      progress: 10, completed_chunks: 0, total_chunks: 0,
+      error_message: 'tts provider error',
+    });
+
+    render(<UploadZone />);
+    dropFile(testPdf);
+    await waitFor(() => screen.getByRole('button', { name: /start conversion/i }));
+    fireEvent.click(screen.getByRole('button', { name: /start conversion/i }));
+
+    await waitFor(() => screen.getByRole('alert'));
+    expect(screen.getByText(/Audio generation failed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Completed.*chapters/i)).not.toBeInTheDocument();
+  });
+
+  // ── ETA confidence copy ───────────────────────────────────────────────────
+
+  describe('formatEtaConfident', () => {
+    it('returns "Usually under 2 minutes" for ≤ 90 s', () => {
+      expect(formatEtaConfident(60)).toBe('Usually under 2 minutes');
+      expect(formatEtaConfident(90)).toBe('Usually under 2 minutes');
+    });
+
+    it('returns "Usually 2–5 minutes" for 91–300 s', () => {
+      expect(formatEtaConfident(180)).toBe('Usually 2–5 minutes');
+      expect(formatEtaConfident(300)).toBe('Usually 2–5 minutes');
+    });
+
+    it('returns "Usually 5–10 minutes" for 301–600 s', () => {
+      expect(formatEtaConfident(360)).toBe('Usually 5–10 minutes');
+    });
+
+    it('returns "Usually over 10 minutes" for > 600 s', () => {
+      expect(formatEtaConfident(700)).toBe('Usually over 10 minutes');
+    });
   });
 
   // ── mapErrorMessage unit tests ────────────────────────────────────────────
