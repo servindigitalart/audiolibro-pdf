@@ -66,19 +66,21 @@ export default function MiniPlayer() {
       role="complementary"
       aria-label="Mini player — currently playing"
       className={cn(
-        'fixed bottom-0 left-0 right-0 z-40 transition-transform duration-300 ease-smooth',
+        // On mobile: sit above the bottom nav (bottom-14 = 56px = nav height)
+        // On desktop: sit at absolute bottom
+        'fixed bottom-14 md:bottom-0 left-0 right-0 z-40 transition-transform duration-300 ease-smooth',
         visible ? 'translate-y-0' : 'translate-y-full',
       )}
     >
-      {/* Gradient fade behind the bar so content below doesn't feel cut off */}
+      {/* Gradient fade */}
       <div
-        className="h-6 pointer-events-none"
+        className="h-4 pointer-events-none"
         style={{ background: 'linear-gradient(to bottom, transparent, rgba(247,246,243,0.9))' }}
         aria-hidden="true"
       />
 
-      {/* Bar */}
-      <div className="bg-sonoro-white border-t border-sonoro-border shadow-modal">
+      {/* Bar — on desktop add safe-area-bottom so home indicator doesn't clip */}
+      <div className="bg-sonoro-white border-t border-sonoro-border shadow-modal md:pb-safe">
         {/* Progress stripe — only shown when in-progress */}
         {!isComplete && (
           <div
@@ -143,10 +145,10 @@ export default function MiniPlayer() {
             )}
           </a>
 
-          {/* Dismiss */}
+          {/* Dismiss — minimum 44×44px touch target */}
           <button
             onClick={() => { setVisible(false); setTimeout(() => setDismissed(true), 300); }}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-sonoro-300 hover:text-sonoro-700 hover:bg-sonoro-surface transition-colors"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-sonoro-300 hover:text-sonoro-700 hover:bg-sonoro-surface transition-colors"
             aria-label="Dismiss mini player"
           >
             <svg className="w-3.5 h-3.5" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true">

@@ -829,6 +829,65 @@ export default function AudioPlayer({ chapters, documentTitle, documentId = '', 
     track('chapter_changed', { document_id: documentId, chapter_index: currentIdx });
   }, [currentIdx]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Media Session API — lock screen + notification controls ──────────────────
+  // Sets metadata (title/artist) and action handlers so users can control
+  // playback from the lock screen, notification bar, and Bluetooth headsets.
+
+  // Update metadata whenever the chapter changes
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return;
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title:  chapter?.title ?? documentTitle,
+      artist: documentTitle,
+      album:  'Sonoro',
+    });
+  }, [currentIdx, documentTitle]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep playback state in sync with the OS
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return;
+    navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+  }, [isPlaying]);
+
+  // Register action handlers once on mount (stable via refs in the hook)
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return;
+    const ms = navigator.mediaSession;
+
+    ms.setActionHandler('play',          () => actions.togglePlay());
+    ms.setActionHandler('pause',         () => actions.togglePlay());
+    ms.setActionHandler('previoustrack', () => actions.prevChapter());
+    ms.setActionHandler('nexttrack',     () => actions.nextChapter());
+    ms.setActionHandler('seekbackward',  (d) => actions.skipBack(d.seekOffset ?? 10));
+    ms.setActionHandler('seekforward',   (d) => actions.skipForward(d.seekOffset ?? 10));
+    try {
+      ms.setActionHandler('seekto', (d) => {
+        if (d.seekTime !== undefined && audioRef.current) {
+          audioRef.current.currentTime = d.seekTime;
+        }
+      });
+    } catch { /* seekto not universally supported */ }
+
+    return () => {
+      (['play', 'pause', 'previoustrack', 'nexttrack', 'seekbackward', 'seekforward'] as const).forEach(a => {
+        try { ms.setActionHandler(a, null); } catch { /* ignore */ }
+      });
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Update the lock-screen scrubber position
+  useEffect(() => {
+    if (!('mediaSession' in navigator) || !('setPositionState' in navigator.mediaSession)) return;
+    if (duration <= 0) return;
+    try {
+      navigator.mediaSession.setPositionState({
+        duration,
+        playbackRate: speed,
+        position:     Math.min(currentTime, duration),
+      });
+    } catch { /* ignore */ }
+  }, [currentTime, duration, speed]);
+
   // ── Autoplay on mount when navigated with ?autoplay=1 ─────────────────────
   useEffect(() => {
     if (!autoplay) return;

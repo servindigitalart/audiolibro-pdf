@@ -2,6 +2,7 @@
 import BaseLayout from './BaseLayout.astro';
 import DashboardSidebar from '@/components/nav/DashboardSidebar.astro';
 import DashboardHeader from '@/components/nav/DashboardHeader.astro';
+import DashboardBottomNav from '@/components/nav/DashboardBottomNav.astro';
 import MiniPlayer from '@/components/dashboard/MiniPlayer';
 import { fetchAccountOverview } from '@/lib/api/server';
 
@@ -26,20 +27,31 @@ const usage = overview?.usage ?? null;
 
 <BaseLayout title={title} noIndex={true}>
   <div class="flex h-screen overflow-hidden bg-sonoro-surface">
-    <!-- Sidebar -->
+    <!-- Sidebar — desktop only (md+) -->
     <DashboardSidebar activeNav={activeNav} user={user} usage={usage} />
 
     <!-- Main content area -->
     <div class="flex flex-1 flex-col overflow-hidden">
       <DashboardHeader user={user} />
 
-      <!-- Extra bottom padding so content doesn't hide behind mini-player -->
-      <main class="flex-1 overflow-y-auto p-6 md:p-8 pb-24">
+      <!--
+        Bottom padding accounts for layered fixed elements:
+          mobile: bottom nav (52px) + mini-player (~64px) + safe area = ~140px → pb-36
+          desktop: mini-player only (~64px) → pb-24
+      -->
+      <main class="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 pb-36 md:pb-24">
         <slot />
       </main>
     </div>
   </div>
 
-  <!-- Sticky mini-player — reads localStorage, client-only -->
+  <!-- Bottom nav — mobile only, sits at z-30 -->
+  <DashboardBottomNav activeNav={activeNav} />
+
+  <!--
+    Sticky mini-player — client-only, z-40.
+    On mobile it uses bottom-14 to float above the bottom nav (14 × 4px = 56px ≥ 52px nav height).
+    On desktop it uses bottom-0.
+  -->
   <MiniPlayer client:load />
 </BaseLayout>

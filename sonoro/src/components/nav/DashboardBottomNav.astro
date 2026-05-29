@@ -1,0 +1,95 @@
+---
+/**
+ * Mobile-only bottom navigation bar.
+ *
+ * Only rendered on screens narrower than the `md` breakpoint (768px).
+ * The sidebar handles navigation on md+ screens.
+ *
+ * Positioned at fixed bottom-0 with env(safe-area-inset-bottom) padding so it
+ * clears the iPhone home indicator. The MiniPlayer uses bottom-14 md:bottom-0
+ * to sit above this bar on mobile.
+ */
+export interface Props {
+  activeNav?: string;
+}
+
+const { activeNav = '' } = Astro.props;
+
+const items = [
+  {
+    id: 'dashboard',
+    label: 'Home',
+    href: '/dashboard',
+    icon: `<svg viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5" aria-hidden="true"><path d="M11.47 3.84a.75.75 0 011.06 0l8.69 8.69a.75.75 0 101.06-1.06l-8.689-8.69a2.25 2.25 0 00-3.182 0l-8.69 8.69a.75.75 0 001.061 1.06l8.69-8.69z"/><path d="M12 5.432l8.159 8.159c.03.03.06.058.091.086v6.198c0 1.035-.84 1.875-1.875 1.875H15a.75.75 0 01-.75-.75v-4.5a.75.75 0 00-.75-.75h-3a.75.75 0 00-.75.75V21a.75.75 0 01-.75.75H5.625a1.875 1.875 0 01-1.875-1.875v-6.198c.03-.028.061-.056.091-.086L12 5.432z"/></svg>`,
+  },
+  {
+    id: 'documents',
+    label: 'Library',
+    href: '/dashboard/documents',
+    icon: `<svg viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5" aria-hidden="true"><path d="M11.25 4.533A9.707 9.707 0 006 3a9.735 9.735 0 00-3.25.555.75.75 0 00-.5.707v14.25a.75.75 0 001 .707A8.237 8.237 0 016 18.75c1.995 0 3.823.707 5.25 1.886V4.533zM12.75 20.636A8.214 8.214 0 0118 18.75c.966 0 1.89.166 2.75.47a.75.75 0 001-.708V4.262a.75.75 0 00-.5-.707A9.735 9.735 0 0018 3a9.707 9.707 0 00-5.25 1.533v16.103z"/></svg>`,
+  },
+  {
+    id: 'upload',
+    label: 'Upload',
+    href: '/dashboard/upload',
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12l4-4 4 4"/></svg>`,
+    accent: true,
+  },
+  {
+    id: 'billing',
+    label: 'Billing',
+    href: '/dashboard/billing',
+    icon: `<svg viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5" aria-hidden="true"><path d="M4.5 3.75a3 3 0 00-3 3v.75h21v-.75a3 3 0 00-3-3h-15z"/><path fill-rule="evenodd" d="M22.5 9.75h-21v7.5a3 3 0 003 3h15a3 3 0 003-3v-7.5zm-18 3.75a.75.75 0 01.75-.75h6a.75.75 0 010 1.5h-6a.75.75 0 01-.75-.75zm.75 2.25a.75.75 0 000 1.5h3a.75.75 0 000-1.5h-3z" clip-rule="evenodd"/></svg>`,
+  },
+  {
+    id: 'settings',
+    label: 'Account',
+    href: '/dashboard/settings',
+    icon: `<svg viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5" aria-hidden="true"><path fill-rule="evenodd" d="M7.5 6a4.5 4.5 0 119 0 4.5 4.5 0 01-9 0zM3.751 20.105a8.25 8.25 0 0116.498 0 .75.75 0 01-.437.695A18.683 18.683 0 0112 22.5c-2.786 0-5.433-.608-7.812-1.7a.75.75 0 01-.437-.695z" clip-rule="evenodd"/></svg>`,
+  },
+] as const;
+---
+
+<nav
+  class="md:hidden fixed bottom-0 left-0 right-0 z-30 bg-sonoro-white/95 border-t border-sonoro-border"
+  style="backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);"
+  aria-label="Mobile navigation"
+>
+  <div class="flex items-stretch" style="padding-bottom: env(safe-area-inset-bottom, 0px)">
+    {items.map(({ id, label, href, icon, accent }) => {
+      const active = activeNav === id;
+      return (
+        <a
+          href={href}
+          class:list={[
+            'flex flex-1 flex-col items-center justify-center gap-0.5 py-2.5 min-h-[52px]',
+            'text-[10px] font-semibold tracking-wide transition-colors duration-150 select-none',
+            active
+              ? 'text-sonoro-amber-dark'
+              : (accent as boolean)
+                ? 'text-sonoro-amber-dark/50 hover:text-sonoro-amber-dark'
+                : 'text-sonoro-400 hover:text-sonoro-700',
+          ]}
+          aria-current={active ? 'page' : undefined}
+          aria-label={label}
+        >
+          <!-- Icon wrapper with active indicator -->
+          <span class:list={[
+            'relative flex items-center justify-center rounded-xl transition-all duration-150',
+            active ? 'text-sonoro-amber-dark' : '',
+          ]}>
+            <!-- Active pill background -->
+            {active && (
+              <span
+                class="absolute inset-0 -inset-x-2.5 rounded-xl bg-sonoro-amber/10"
+                aria-hidden="true"
+              />
+            )}
+            <span set:html={icon} />
+          </span>
+          <span>{label}</span>
+        </a>
+      );
+    })}
+  </div>
+</nav>
