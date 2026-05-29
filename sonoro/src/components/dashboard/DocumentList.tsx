@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { Document } from '@/lib/api/types';
 import { deleteDocument, retryProcessing, getErrorMessage } from '@/lib/api/client';
-import { fmtRelative, fmtFileSize } from '@/lib/utils';
+import { getAllProgress } from '@/hooks/usePlaybackProgress';
+import type { PlaybackProgress } from '@/hooks/usePlaybackProgress';
+import { fmtRelative, fmtFileSize, fmtDuration } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import BookCover from '@/components/ui/BookCover';
 
@@ -16,10 +18,28 @@ interface Props {
   initialDocuments: Document[];
 }
 
+function remainingLabel(p: PlaybackProgress): string {
+  const rem = Math.max(0, p.totalDuration - p.currentTime);
+  const h   = Math.floor(rem / 3600);
+  const m   = Math.floor((rem % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m remaining`;
+  if (m > 1) return `${m} min remaining`;
+  return 'Almost done';
+}
+
 export default function DocumentList({ initialDocuments }: Props) {
   const [docs, setDocs]         = useState<Document[]>(initialDocuments);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [retrying, setRetrying] = useState<string | null>(null);
+  const [progressMap, setProgressMap] = useState<Record<string, PlaybackProgress>>({});
+
+  // Load playback progress from localStorage (client-only)
+  useEffect(() => {
+    const all = getAllProgress();
+    const map: Record<string, PlaybackProgress> = {};
+    for (const p of all) map[p.documentId] = p;
+    setProgressMap(map);
+  }, []);
 
   async function handleDelete(id: string, title: string) {
     if (!confirm(`Delete "${title}"? This cannot be undone.`)) return;
@@ -73,6 +93,20 @@ export default function DocumentList({ initialDocuments }: Props) {
         const isCompleted = doc.status === 'completed';
         const isFailed    = doc.status === 'failed';
         const title       = doc.title || doc.filename;
+        const saved       = isCompleted ? progressMap[doc.id] : undefined;
+        const savedPct    = saved && saved.totalDuration > 0
+          ? Math.round((saved.currentTime / saved.totalDuration) * 100)
+          : 0;
+
+        // Determine which CTA to show for completed docs
+        let listenLabel = 'Start listening';
+        let listenHref  = `/dashboard/documents/${doc.id}`;
+        if (saved?.completed) {
+          listenLabel = 'Listen again';
+        } else if (saved && savedPct > 0) {
+          listenLabel = 'Resume';
+          listenHref  = `/dashboard/documents/${doc.id}?autoplay=1`;
+        }
 
         return (
           <div
@@ -103,6 +137,28 @@ export default function DocumentList({ initialDocuments }: Props) {
                 {doc.upload_date ? ` · ${fmtRelative(doc.upload_date)}` : ''}
               </p>
 
+              {/* Playback progress bar (completed docs with history) */}
+              {isCompleted && saved && savedPct > 0 && !saved.completed && (
+                <div className="mt-2">
+                  <div
+                    className="h-1 w-full max-w-[160px] rounded-full bg-sonoro-border overflow-hidden"
+                    role="progressbar"
+                    aria-valuenow={savedPct}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-label={`${savedPct}% listened`}
+                  >
+                    <div
+                      className="h-full rounded-full bg-sonoro-amber transition-all duration-500"
+                      style={{ width: `${savedPct}%` }}
+                    />
+                  </div>
+                  <p className="text-[10px] text-sonoro-400 mt-0.5">
+                    {remainingLabel(saved)}
+                  </p>
+                </div>
+              )}
+
               {/* Processing indeterminate bar */}
               {isActive && (
                 <div className="mt-2 h-0.5 w-24 rounded-full bg-sonoro-border overflow-hidden">
@@ -115,14 +171,14 @@ export default function DocumentList({ initialDocuments }: Props) {
             <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
               {isCompleted && (
                 <a
-                  href={`/dashboard/documents/${doc.id}`}
+                  href={listenHref}
                   className="btn-primary btn-sm gap-1.5"
-                  aria-label={`Listen to ${title}`}
+                  aria-label={`${listenLabel} — ${title}`}
                 >
                   <svg className="w-3 h-3" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
                     <path d="M2.5 2.5l7 3.5-7 3.5V2.5z"/>
                   </svg>
-                  Listen
+                  {listenLabel}
                 </a>
               )}
 

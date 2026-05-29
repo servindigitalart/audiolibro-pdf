@@ -166,6 +166,18 @@ class ProcessingJob(Base):
         comment="User's plan tier when this job ran (FREE/BASIC/PRO/ENTERPRISE)"
     )
 
+    # Narration preferences (migration 024)
+    narration_style = Column(
+        String(50),
+        nullable=True,
+        comment="User-selected style: calm | storytelling | documentary | podcast | educational"
+    )
+    voice_id_override = Column(
+        String(255),
+        nullable=True,
+        comment="User-selected voice; overrides auto-detected voice when set"
+    )
+
     # Error handling
     error_message = Column(
         Text,

@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field, field_validator
 
 class ProcessDocumentRequest(BaseModel):
     """Request to process a document."""
-    
+
     job_type: str = Field(
         default="full_process",
         description="Type of processing job"
@@ -31,21 +31,30 @@ class ProcessDocumentRequest(BaseModel):
         le=10,
         description="Job priority (1=highest, 10=lowest)"
     )
-    
+    voice_id: Optional[str] = Field(
+        default=None,
+        description="Override the auto-detected TTS voice"
+    )
+    narration_style: Optional[str] = Field(
+        default=None,
+        description="Narration style: calm | storytelling | documentary | podcast | educational"
+    )
+
     @field_validator("job_type")
     @classmethod
     def validate_job_type(cls, v: str) -> str:
-        """Validate job type is supported."""
         valid_types = ["full_process", "preview", "reprocess"]
         if v not in valid_types:
             raise ValueError(f"Invalid job_type. Must be one of: {valid_types}")
         return v
-    
+
     class Config:
         json_schema_extra = {
             "example": {
                 "job_type": "full_process",
-                "priority": 5
+                "priority": 5,
+                "voice_id": "en-US-Neural2-C",
+                "narration_style": "calm",
             }
         }
 

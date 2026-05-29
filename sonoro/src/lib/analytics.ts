@@ -30,7 +30,9 @@ export type AnalyticsEventType =
   | 'audiobook_downloaded'
   | 'processing_started'
   | 'processing_completed'
-  | 'processing_stage_changed';
+  | 'processing_stage_changed'
+  | 'mini_player_opened'
+  | 'playback_resumed';
 
 export type SessionSource = 'direct' | 'continue_listening' | 'autoplay';
 

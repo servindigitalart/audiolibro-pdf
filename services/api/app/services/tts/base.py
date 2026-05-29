@@ -31,18 +31,22 @@ class TTSProvider(ABC):
         text: str,
         voice_id: str,
         language_code: str,
+        speaking_rate: float = 1.0,
+        pitch: float = 0.0,
     ) -> bytes:
         """
         Convert text to speech audio.
-        
+
         Args:
             text: Text to convert to speech
             voice_id: Provider-specific voice identifier
             language_code: Language code (e.g., 'en-US', 'es-ES')
-            
+            speaking_rate: Playback speed multiplier (1.0 = normal)
+            pitch: Pitch shift in semitones (0.0 = normal)
+
         Returns:
             Audio data in MP3 format as bytes
-            
+
         Raises:
             TTSProviderError: If synthesis fails
         """

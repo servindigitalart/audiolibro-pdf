@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import type { Chapter } from '@/lib/api/types';
 import { useAudioPlayer } from '@/hooks/useAudioPlayer';
-import { usePlaybackProgress } from '@/hooks/usePlaybackProgress';
+import { usePlaybackProgress, loadProgress, saveProgress, clearProgress } from '@/hooks/usePlaybackProgress';
 import { fmtDuration } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import BookCover from '@/components/ui/BookCover';
@@ -737,7 +737,14 @@ function SleepTimer({
 
 // ── Main AudioPlayer ──────────────────────────────────────────────────────────
 export default function AudioPlayer({ chapters, documentTitle, documentId = '', autoplay = false }: Props) {
-  const { audioRef, chapter, state, actions, audioProps } = useAudioPlayer({ chapters });
+  // Load saved position once on mount — drives initialChapterIdx + initialTime in the hook
+  const savedProgress = useMemo(() => documentId ? loadProgress(documentId) : null, [documentId]);
+
+  const { audioRef, chapter, state, actions, audioProps } = useAudioPlayer({
+    chapters,
+    initialChapterIdx: savedProgress?.chapterIdx ?? 0,
+    initialTime:       savedProgress?.currentTime ?? 0,
+  });
   const [immersive,      setImmersive]      = useState(false);
   const [isCompleted,    setIsCompleted]    = useState(false);
   const [sleepMinutes,   setSleepMinutes]   = useState<SleepOption>(0);
@@ -747,16 +754,48 @@ export default function AudioPlayer({ chapters, documentTitle, documentId = '', 
 
   const totalDuration = chapters.reduce((acc, ch) => acc + (ch.duration_seconds ?? 0), 0) || duration;
 
-  // Persist playback progress — includes chapter title now
+  // Periodic throttled save during playback (every 5 s)
   usePlaybackProgress(
-    documentId,
-    documentTitle,
-    currentIdx,
-    chapter?.title ?? '',
-    currentTime,
-    totalDuration,
-    isPlaying,
+    documentId, documentTitle, currentIdx, chapter?.title ?? '',
+    currentTime, totalDuration, isPlaying, speed,
   );
+
+  // Stable ref so beforeunload handler captures current values without stale closure
+  const saveStateRef = useRef({ currentTime, currentIdx, totalDuration, speed });
+  useEffect(() => { saveStateRef.current = { currentTime, currentIdx, totalDuration, speed }; });
+
+  // Save on pause
+  const prevIsPlayingRef = useRef(isPlaying);
+  useEffect(() => {
+    if (prevIsPlayingRef.current && !isPlaying && saveStateRef.current.currentTime > 0 && documentId) {
+      const { currentTime: t, currentIdx: idx, totalDuration: dur, speed: spd } = saveStateRef.current;
+      saveProgress({
+        documentId, documentTitle,
+        chapterIdx: idx, chapterTitle: chapters[idx]?.title ?? '',
+        currentTime: t, totalDuration: dur,
+        timestamp: Date.now(), playbackSpeed: spd,
+      });
+    }
+    prevIsPlayingRef.current = isPlaying;
+  }, [isPlaying]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Save before the page is unloaded (navigation / tab close)
+  useEffect(() => {
+    if (!documentId) return;
+    function onUnload() {
+      const { currentTime: t, currentIdx: idx, totalDuration: dur, speed: spd } = saveStateRef.current;
+      if (t > 0) {
+        saveProgress({
+          documentId, documentTitle,
+          chapterIdx: idx, chapterTitle: chapters[idx]?.title ?? '',
+          currentTime: t, totalDuration: dur,
+          timestamp: Date.now(), playbackSpeed: spd,
+        });
+      }
+    }
+    window.addEventListener('beforeunload', onUnload);
+    return () => window.removeEventListener('beforeunload', onUnload);
+  }, [documentId, documentTitle]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Analytics: session tracking ───────────────────────────────────────────
   const sessionIdRef = useRef<string | null>(null);
@@ -821,6 +860,16 @@ export default function AudioPlayer({ chapters, documentTitle, documentId = '', 
           duration_seconds: totalDuration,
           chapter_count:    chapters.length,
         });
+        // Mark completed in localStorage then clear the resume pointer
+        if (documentId) {
+          saveProgress({
+            documentId, documentTitle,
+            chapterIdx: currentIdx, chapterTitle: chapter?.title ?? '',
+            currentTime: totalDuration, totalDuration,
+            timestamp: Date.now(), playbackSpeed: speed, completed: true,
+          });
+          clearProgress(documentId);
+        }
         if (sessionIdRef.current) {
           void endPlaybackSession(sessionIdRef.current, Math.round(totalDuration), 100, speed, [currentIdx]);
           sessionIdRef.current = null;
@@ -923,6 +972,12 @@ export default function AudioPlayer({ chapters, documentTitle, documentId = '', 
                   </>
                 )}
               </div>
+              {/* Resume position hint — shown before first play when saved progress exists */}
+              {!isPlaying && currentTime < 3 && savedProgress && savedProgress.currentTime > 30 && !savedProgress.completed && (
+                <p className="text-[11px] text-sonoro-amber-dark mt-0.5 font-medium">
+                  Resume from {fmtDuration(savedProgress.currentTime)}
+                </p>
+              )}
             </div>
           </div>
 

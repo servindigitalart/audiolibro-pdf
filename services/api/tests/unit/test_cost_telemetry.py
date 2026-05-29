@@ -306,3 +306,53 @@ async def test_get_expensive_jobs_returns_list():
     assert len(jobs) == 1
     assert jobs[0]["plan_tier"] == "ENTERPRISE"
     assert jobs[0]["estimated_cost_usd"] == pytest.approx(0.312)
+
+
+# ── CostTracker.track_event — logger kwargs style (no TypeError) ──────────────
+
+async def test_track_event_returns_cost_event():
+    """Proves BoundLogger kwargs call doesn't raise TypeError."""
+    from app.financial.cost.cost_tracker import CostTracker
+    from app.financial.cost.cost_enums import CostEventType, CostProvider
+    from app.financial.cost.cost_models import CostEvent
+
+    user_id = uuid4()
+    db = AsyncMock()
+    db.add = MagicMock()  # sync method on AsyncSession
+
+    event = await CostTracker.track_event(
+        db,
+        user_id=user_id,
+        event_type=CostEventType.TTS_JOB,
+        quantity=50_000.0,
+        unit_cost=0.000016,
+        provider=CostProvider.GOOGLE,
+    )
+
+    assert isinstance(event, CostEvent)
+    assert event.user_id == user_id
+    assert event.event_type == CostEventType.TTS_JOB
+    assert event.total_cost == pytest.approx(50_000.0 * 0.000016)
+    db.add.assert_called_once_with(event)
+    db.commit.assert_awaited_once()
+
+
+async def test_track_event_defaults():
+    """provider defaults to INTERNAL, metadata to empty dict."""
+    from app.financial.cost.cost_tracker import CostTracker
+    from app.financial.cost.cost_enums import CostEventType, CostProvider
+    from app.financial.cost.cost_models import CostEvent
+
+    db = AsyncMock()
+    db.add = MagicMock()
+
+    event = await CostTracker.track_event(
+        db,
+        user_id=uuid4(),
+        event_type=CostEventType.API_CALL,
+    )
+
+    assert isinstance(event, CostEvent)
+    assert event.provider == CostProvider.INTERNAL
+    assert event.activity_metadata == {}
+    assert event.total_cost == pytest.approx(0.0)  # quantity=1.0, unit_cost=0.0

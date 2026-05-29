@@ -64,8 +64,11 @@ class CostTracker:
         await db.refresh(event)
 
         logger.info(
-            "Cost event tracked: user=%s type=%s quantity=%s cost=$%.4f",
-            user_id, event_type, quantity, total_cost,
+            "cost_event_tracked",
+            user_id=str(user_id),
+            event_type=str(event_type),
+            quantity=quantity,
+            total_cost=round(total_cost, 4),
         )
         return event
 

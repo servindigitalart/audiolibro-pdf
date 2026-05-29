@@ -3,6 +3,7 @@ import { useRef, useEffect } from 'react';
 const KEY_PREFIX   = 'sonoro_progress_';
 const LAST_PLAYED  = 'sonoro_last_played';
 const SAVE_INTERVAL_MS = 5_000;
+const COMPLETED_THRESHOLD = 0.98;
 
 export interface PlaybackProgress {
   documentId:    string;
@@ -12,11 +13,20 @@ export interface PlaybackProgress {
   currentTime:   number;
   totalDuration: number;
   timestamp:     number;
+  // Optional — added in Phase 5E, backward-compatible
+  playbackSpeed?: number;
+  progressPct?:   number;
+  completed?:     boolean;
 }
 
 export function saveProgress(p: PlaybackProgress): void {
   try {
-    localStorage.setItem(KEY_PREFIX + p.documentId, JSON.stringify(p));
+    const progressPct = p.totalDuration > 0
+      ? Math.round((p.currentTime / p.totalDuration) * 100)
+      : (p.progressPct ?? 0);
+    const completed = p.completed ?? progressPct / 100 >= COMPLETED_THRESHOLD;
+    const enriched: PlaybackProgress = { ...p, progressPct, completed };
+    localStorage.setItem(KEY_PREFIX + p.documentId, JSON.stringify(enriched));
     localStorage.setItem(LAST_PLAYED, p.documentId);
   } catch { /* storage unavailable */ }
 }
@@ -77,6 +87,7 @@ export function usePlaybackProgress(
   currentTime:   number,
   totalDuration: number,
   isPlaying:     boolean,
+  playbackSpeed  = 1,
 ) {
   const lastSave = useRef(0);
 
@@ -85,7 +96,10 @@ export function usePlaybackProgress(
     const now = Date.now();
     if (now - lastSave.current < SAVE_INTERVAL_MS) return;
     lastSave.current = now;
-    saveProgress({ documentId, documentTitle, chapterIdx, chapterTitle, currentTime, totalDuration, timestamp: now });
+    saveProgress({
+      documentId, documentTitle, chapterIdx, chapterTitle,
+      currentTime, totalDuration, timestamp: now, playbackSpeed,
+    });
     console.log('[SONORO] continue_listening_saved');
   }); // intentionally no deps — runs every render, throttled by ref
 }

@@ -103,7 +103,7 @@ describe('VoicePicker', () => {
     fireEvent.click(previewBtn);
 
     await waitFor(() => {
-      expect(mockPreview).toHaveBeenCalledWith('v1', 'en-US');
+      expect(mockPreview).toHaveBeenCalledWith('v1', 'en-US', undefined);
     });
   });
 

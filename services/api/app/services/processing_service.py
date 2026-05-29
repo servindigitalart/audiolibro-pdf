@@ -156,6 +156,8 @@ class ProcessingService:
             priority=priority,
             status=JobStatus.QUEUED,
             progress_percentage=0,
+            narration_style=request.narration_style or None,
+            voice_id_override=request.voice_id or None,
         )
 
         self.db.add(job)

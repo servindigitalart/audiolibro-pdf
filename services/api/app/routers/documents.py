@@ -29,6 +29,7 @@ from uuid import UUID
 
 from fastapi import (
     APIRouter,
+    Body,
     Depends,
     File,
     Form,
@@ -487,10 +488,14 @@ async def delete_document(
 )
 async def start_document_processing(
     document_id: UUID,
+    body: Optional[ProcessDocumentRequest] = Body(default=None),
     db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Enqueue processing for a document that was uploaded with preflight_only=True."""
+    """Enqueue processing for a document that was uploaded with preflight_only=True.
+
+    Body is optional — existing clients that send no body continue to work.
+    """
     from app.db.models.document import Document as _DocModel
 
     doc_result = await db.execute(
@@ -503,11 +508,20 @@ async def start_document_processing(
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
+    request = body or ProcessDocumentRequest()
+    logger.info(
+        "[SONORO] processing_start_requested document_id=%s user_id=%s "
+        "narration_style=%s voice_id_override=%s",
+        document_id, current_user.id,
+        request.narration_style or "default",
+        request.voice_id or "auto",
+    )
+
     processing_service = ProcessingService(db)
     job = await processing_service.create_processing_job(
         document_id=document_id,
         user=current_user,
-        request=ProcessDocumentRequest(),
+        request=request,
     )
     logger.info(
         "[SONORO] processing_job_enqueued_via_start document_id=%s user_id=%s job_id=%s",

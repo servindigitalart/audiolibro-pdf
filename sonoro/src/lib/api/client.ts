@@ -186,8 +186,18 @@ export async function uploadDocument(
   return data;
 }
 
-export async function startProcessing(documentId: string): Promise<{ job_id: string; status: string }> {
-  const { data } = await api.post(`/documents/${documentId}/process`);
+export async function startProcessing(
+  documentId: string,
+  voiceId?: string,
+  narrationStyle?: string,
+): Promise<{ job_id: string; status: string }> {
+  const body: Record<string, string> = {};
+  if (voiceId)        body.voice_id        = voiceId;
+  if (narrationStyle) body.narration_style = narrationStyle;
+  const { data } = await api.post(
+    `/documents/${documentId}/process`,
+    Object.keys(body).length ? body : undefined,
+  );
   return data;
 }
 
@@ -288,13 +298,21 @@ const _previewBlobCache = new Map<string, string>();
  * Returns a blob URL suitable for use with `new Audio(url)`.
  * Throws if the API is unavailable; caller should show an error state.
  */
-export async function previewVoice(voiceId: string, languageCode: string): Promise<string> {
-  const key = `${voiceId}:${languageCode}`;
+export async function previewVoice(
+  voiceId: string,
+  languageCode: string,
+  narrationStyle?: string,
+): Promise<string> {
+  const key = `${voiceId}:${languageCode}:${narrationStyle ?? ''}`;
   const cached = _previewBlobCache.get(key);
   if (cached) return cached;
 
   const response = await api.get('/voices/preview', {
-    params:       { voice_id: voiceId, language_code: languageCode },
+    params: {
+      voice_id:      voiceId,
+      language_code: languageCode,
+      ...(narrationStyle ? { narration_style: narrationStyle } : {}),
+    },
     responseType: 'blob',
   });
   const blobUrl = URL.createObjectURL(response.data as Blob);

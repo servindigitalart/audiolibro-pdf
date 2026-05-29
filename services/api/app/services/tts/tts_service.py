@@ -127,6 +127,8 @@ class TTSService:
         text: str,
         voice_id: Optional[str] = None,
         language_code: Optional[str] = None,
+        speaking_rate: float = 1.0,
+        pitch: float = 0.0,
     ) -> bytes:
         """
         Synthesize text to speech with full tracking.
@@ -184,6 +186,8 @@ class TTSService:
                 text=text,
                 voice_id=voice_id,
                 language_code=language_code,
+                speaking_rate=speaking_rate,
+                pitch=pitch,
             )
             
             # Calculate actual duration

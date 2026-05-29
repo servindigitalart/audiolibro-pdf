@@ -23,6 +23,7 @@ from app.core.auth_dependencies import get_current_active_user
 from app.db.models.user import User
 from app.services.tts.google_provider import GoogleTTSProvider
 from app.services.tts.base import TTSProviderError
+from app.services.tts.narration_style import get_style_params
 
 logger = get_logger(__name__)
 
@@ -50,20 +51,22 @@ _cache_lock = asyncio.Lock()
 
 @router.get("/preview")
 async def preview_voice(
-    voice_id:      str,
-    language_code: str = "en-US",
-    current_user:  User = Depends(get_current_active_user),
+    voice_id:        str,
+    language_code:   str = "en-US",
+    narration_style: Optional[str] = None,
+    current_user:    User = Depends(get_current_active_user),
 ) -> Response:
     """
     Stream a short TTS audio sample for the given voice.
 
     Returns raw MP3 bytes so the frontend can create a blob URL
     without storing audio data to R2.  Previews are cached in memory
-    for the lifetime of the server process.
+    per voice+language+style combination for the lifetime of the server process.
     """
-    cache_key  = f"{voice_id}:{language_code}"
-    lang_short = language_code[:2].lower()
-    text       = _PREVIEW_TEXTS.get(lang_short, _DEFAULT_PREVIEW_TEXT)
+    style_params = get_style_params(narration_style)
+    cache_key    = f"{voice_id}:{language_code}:{narration_style or ''}"
+    lang_short   = language_code[:2].lower()
+    text         = _PREVIEW_TEXTS.get(lang_short, _DEFAULT_PREVIEW_TEXT)
 
     # Fast path — return cached bytes without hitting TTS API
     async with _cache_lock:
@@ -77,17 +80,29 @@ async def preview_voice(
             user_id=str(current_user.id),
             voice_id=voice_id,
             language_code=language_code,
+            narration_style=narration_style or "default",
+            speaking_rate=style_params.speaking_rate,
+            pitch=style_params.pitch,
         )
         provider    = GoogleTTSProvider()
-        audio_bytes: bytes = await provider.synthesize(text, voice_id, language_code)
+        audio_bytes: bytes = await provider.synthesize(
+            text,
+            voice_id,
+            language_code,
+            speaking_rate=style_params.speaking_rate,
+            pitch=style_params.pitch,
+        )
 
         async with _cache_lock:
             _cache[cache_key] = audio_bytes
 
         logger.info(
-            "voice_preview_generated",
+            "voice_preview_style_applied",
             user_id=str(current_user.id),
             voice_id=voice_id,
+            narration_style=narration_style or "default",
+            speaking_rate=style_params.speaking_rate,
+            pitch=style_params.pitch,
             bytes=len(audio_bytes),
         )
         return Response(content=audio_bytes, media_type="audio/mpeg")

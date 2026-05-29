@@ -420,6 +420,27 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
             tts_voice_id = lang_result.voice_id
             tts_language_code = lang_result.language_code
 
+            # Honour explicit voice selection made in the preflight UI
+            if job.voice_id_override:
+                tts_voice_id = job.voice_id_override
+                logger.info(
+                    "[SONORO] voice_override_applied job_id=%s voice=%s",
+                    job_id, tts_voice_id,
+                )
+
+            # Resolve narration style → speaking_rate / pitch
+            from app.services.tts.narration_style import get_style_params as _get_style
+            _style_params = _get_style(job.narration_style)
+            logger.info(
+                "[SONORO] narration_style_resolved job_id=%s style=%s "
+                "speaking_rate=%s pitch=%s voice_id=%s",
+                job_id,
+                job.narration_style or "default",
+                _style_params.speaking_rate,
+                _style_params.pitch,
+                tts_voice_id,
+            )
+
             # ============================================
             # STEP 1c: Pre-flight quota check
             # ============================================
@@ -506,6 +527,8 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
                             text=chunk,
                             voice_id=tts_voice_id,
                             language_code=tts_language_code,
+                            speaking_rate=_style_params.speaking_rate,
+                            pitch=_style_params.pitch,
                         )
                         _chars_synthesized += len(chunk)
                         p = str(tmp / f"ch1_chunk{j + 1}.mp3")

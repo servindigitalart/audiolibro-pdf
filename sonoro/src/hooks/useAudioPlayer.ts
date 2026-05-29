@@ -2,7 +2,9 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import type { Chapter } from '@/lib/api/types';
 
 interface Options {
-  chapters: Chapter[];
+  chapters:            Chapter[];
+  initialChapterIdx?:  number;
+  initialTime?:        number;
 }
 
 export interface AudioState {
@@ -30,10 +32,14 @@ export interface AudioActions {
   goToChapter: (idx: number) => void;
 }
 
-export function useAudioPlayer({ chapters }: Options) {
+export function useAudioPlayer({ chapters, initialChapterIdx = 0, initialTime = 0 }: Options) {
   const audioRef = useRef<HTMLAudioElement>(null);
 
-  const [currentIdx,  setCurrentIdx]  = useState(0);
+  // Track whether the initial saved position has been applied yet
+  const initialTimeRef     = useRef(initialTime);
+  const initialTimeApplied = useRef(false);
+
+  const [currentIdx,  setCurrentIdx]  = useState(initialChapterIdx);
   const [isPlaying,   setIsPlaying]   = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration,    setDuration]    = useState(0);
@@ -185,7 +191,15 @@ export function useAudioPlayer({ chapters }: Options) {
 
   const audioProps = {
     onTimeUpdate:     () => { if (audioRef.current) setCurrentTime(audioRef.current.currentTime); },
-    onLoadedMetadata: () => { if (audioRef.current) setDuration(audioRef.current.duration); },
+    onLoadedMetadata: () => {
+      if (!audioRef.current) return;
+      setDuration(audioRef.current.duration);
+      // Restore saved position — applied only once, on the initial chapter load
+      if (!initialTimeApplied.current && initialTimeRef.current > 0 && audioRef.current.duration > 0) {
+        audioRef.current.currentTime = Math.min(initialTimeRef.current, audioRef.current.duration - 1);
+        initialTimeApplied.current = true;
+      }
+    },
     onEnded: () => {
       const next = currentIdxRef.current + 1;
       if (next < chaptersRef.current.length && chaptersRef.current[next]?.audio_url) {

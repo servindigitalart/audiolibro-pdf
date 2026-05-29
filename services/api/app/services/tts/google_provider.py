@@ -108,6 +108,8 @@ class GoogleTTSProvider(TTSProvider):
         text: str,
         voice_id: str,
         language_code: str,
+        speaking_rate: float = 1.0,
+        pitch: float = 0.0,
     ) -> bytes:
         """
         Convert text to speech using Google Cloud TTS.
@@ -140,12 +142,8 @@ class GoogleTTSProvider(TTSProvider):
             )
         
         logger.info(
-            f"Synthesizing {len(text)} characters with Google TTS",
-            extra={
-                "character_count": len(text),
-                "voice_id": voice_id,
-                "language_code": language_code
-            }
+            "[SONORO] tts_style_applied voice_id=%s speaking_rate=%s pitch=%s chars=%d",
+            voice_id, speaking_rate, pitch, len(text),
         )
         
         try:
@@ -161,8 +159,8 @@ class GoogleTTSProvider(TTSProvider):
             # Configure audio output as MP3
             audio_config = texttospeech_v1.AudioConfig(
                 audio_encoding=texttospeech_v1.AudioEncoding.MP3,
-                speaking_rate=1.0,  # Normal speed
-                pitch=0.0,  # Normal pitch
+                speaking_rate=speaking_rate,
+                pitch=pitch,
             )
             
             # Run synthesis in executor to avoid blocking

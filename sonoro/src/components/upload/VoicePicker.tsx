@@ -93,18 +93,19 @@ const _previewCache = new Map<string, string>();
 export const _clearPreviewCache = () => _previewCache.clear();
 
 interface Props {
-  voices:       AvailableVoice[];
-  defaultVoiceId: string;
-  language:     string;
-  languageName: string;
-  selected:     string;
-  onSelect:     (voiceId: string) => void;
+  voices:          AvailableVoice[];
+  defaultVoiceId:  string;
+  language:        string;
+  languageName:    string;
+  selected:        string;
+  onSelect:        (voiceId: string) => void;
+  narrationStyle?: string;
 }
 
 type PreviewState = 'idle' | 'loading' | 'playing' | 'error';
 
 export default function VoicePicker({
-  voices, defaultVoiceId, language, languageName, selected, onSelect,
+  voices, defaultVoiceId, language, languageName, selected, onSelect, narrationStyle,
 }: Props) {
   const [previewState, setPreviewState] = useState<Record<string, PreviewState>>({});
   const [activeVoice,  setActiveVoice]  = useState<string | null>(null);
@@ -133,17 +134,18 @@ export default function VoicePicker({
     setActiveVoice(vid);
     setPreviewState(s => ({ ...s, [vid]: 'loading' }));
 
-    const cached = _previewCache.get(vid);
+    const cacheKey = `${vid}:${narrationStyle ?? ''}`;
+    const cached = _previewCache.get(cacheKey);
     if (cached) {
       playBlob(vid, cached);
       return;
     }
 
     try {
-      console.log('[SONORO] voice_preview_requested', vid);
-      const blobUrl = await previewVoice(vid, language);
-      _previewCache.set(vid, blobUrl);
-      console.log('[SONORO] voice_preview_generated', vid);
+      console.log('[SONORO] voice_preview_requested', vid, 'style=', narrationStyle ?? 'default');
+      const blobUrl = await previewVoice(vid, language, narrationStyle);
+      _previewCache.set(cacheKey, blobUrl);
+      console.log('[SONORO] voice_preview_style_applied', vid, 'style=', narrationStyle ?? 'default');
       playBlob(vid, blobUrl);
     } catch {
       console.warn('[SONORO] voice_preview_failed', vid);
