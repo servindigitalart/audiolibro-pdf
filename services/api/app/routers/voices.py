@@ -13,19 +13,18 @@ are globally cached, and are not attributed to user quota.
 """
 
 import asyncio
-import logging
 from typing import Optional
 
-import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
 
+from app.core.logging_config import get_logger
 from app.core.auth_dependencies import get_current_active_user
 from app.db.models.user import User
 from app.services.tts.google_provider import GoogleTTSProvider
 from app.services.tts.base import TTSProviderError
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1/voices", tags=["voices"])
 
