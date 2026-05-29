@@ -48,7 +48,7 @@ def upgrade() -> None:
         sa.Column("listened_seconds",              sa.Integer(), nullable=False, server_default="0"),
         sa.Column("completion_percentage",         sa.Float(),   nullable=False, server_default="0"),
         sa.Column("playback_speed",                sa.Float(),   nullable=False, server_default="1"),
-        sa.Column("chapters_visited",              sa.JSON(),    nullable=False, server_default="'[]'"),
+        sa.Column("chapters_visited",              sa.JSON(),    nullable=False, server_default=sa.text("'[]'::json")),
         sa.Column("resumed_from_continue_listening", sa.Boolean(), nullable=False, server_default="false"),
         sa.Column("session_source", sa.String(50), nullable=True),
     )
@@ -63,7 +63,7 @@ def upgrade() -> None:
         sa.Column("document_id", UUID(as_uuid=True), sa.ForeignKey("documents.id",         ondelete="SET NULL"), nullable=True),
         sa.Column("event_type",  sa.String(64),  nullable=False),
         sa.Column("created_at",  sa.DateTime(),  nullable=False, server_default=sa.text("now()")),
-        sa.Column("properties",  sa.JSON(),      nullable=False, server_default="'{}'"),
+        sa.Column("properties",  sa.JSON(),      nullable=False, server_default=sa.text("'{}'::json")),
     )
     op.create_index("idx_analytics_events_user_created", "analytics_events", ["user_id",    "created_at"])
     op.create_index("idx_analytics_events_type_created", "analytics_events", ["event_type", "created_at"])

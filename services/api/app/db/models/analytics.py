@@ -24,6 +24,7 @@ from sqlalchemy import (
     JSON,
     String,
     ForeignKey,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -78,7 +79,7 @@ class PlaybackSession(Base):
         JSON,
         nullable=False,
         default=list,
-        server_default="[]",
+        server_default=text("'[]'::json"),
         comment="Ordered list of chapter indices visited during this session",
     )
     resumed_from_continue_listening = Column(
@@ -155,7 +156,7 @@ class AnalyticsEvent(Base):
         JSON,
         nullable=False,
         default=dict,
-        server_default="{}",
+        server_default=text("'{}'::json"),
     )
 
     # Optional context links
