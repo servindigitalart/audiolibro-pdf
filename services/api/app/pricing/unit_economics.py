@@ -59,6 +59,11 @@ class UnitCostRates:
 
 COST_RATES = UnitCostRates()
 
+# Estimated characters per listening hour.
+# Assumes ~150 words/min average narration pace × 4.5 chars/word × 60 min/hr.
+# Used for cost-per-listening-hour calculations and paywall UX copy.
+CHARS_PER_LISTENING_HOUR: int = 50_000
+
 
 # ── Per-request cost calculation ──────────────────────────────────────────────
 
@@ -324,3 +329,22 @@ class UnitEconomicsEngine:
         if net_rev > 0:
             net_rev -= net_rev * self._rates.stripe_rate + self._rates.stripe_flat
         return net_rev - monthly_cost
+
+    # ── Listening-hour economics ───────────────────────────────────────────────
+
+    @staticmethod
+    def listening_hours_for_chars(chars: int) -> float:
+        """Convert a character count to an estimated listening duration in hours."""
+        return chars / CHARS_PER_LISTENING_HOUR
+
+    def cost_per_listening_hour(self, tier: PlanTier) -> float:
+        """
+        Return the TTS cost to produce one hour of audio for *tier*.
+
+        At current rates:
+          Standard (FREE/BASIC): $0.000004 × 50 000 = $0.20/hr
+          Neural   (PRO/ENT):    $0.000016 × 50 000 = $0.80/hr
+        """
+        use_neural = tier in (PlanTier.PRO, PlanTier.ENTERPRISE)
+        tts_rate = self._rates.tts_neural_per_char if use_neural else self._rates.tts_standard_per_char
+        return tts_rate * CHARS_PER_LISTENING_HOUR

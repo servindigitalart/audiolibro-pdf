@@ -1,0 +1,81 @@
+---
+export const prerender = true;
+
+import MarketingLayout from '@/layouts/MarketingLayout.astro';
+import LandingTemplate from '@/components/marketing/LandingTemplate.astro';
+
+const siteUrl = import.meta.env.SITE_URL ?? import.meta.env.PUBLIC_SITE_URL ?? 'https://sonoro.app';
+
+const benefits = [
+  {
+    icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2z',
+    title: 'Any PDF, any subject',
+    body: 'Textbooks, research papers, business reports, legal documents — Sonoro handles dense formatting that other tools mangle.',
+  },
+  {
+    icon: 'M15.536 8.464a5 5 0 0 1 0 7.072M12 6a6 6 0 0 1 0 12M8.464 8.464a5 5 0 0 0 0 7.072',
+    title: 'Natural-sounding voices',
+    body: 'Choose from dozens of high-quality AI voices across multiple languages. No robotic monotone — just clear, pleasant narration.',
+  },
+  {
+    icon: 'M12 6v6l4 2M12 2a10 10 0 1 1 0 20A10 10 0 0 1 12 2z',
+    title: 'Ready in under 60 seconds',
+    body: 'Upload, pick a voice, press go. Your audiobook is generated in under a minute — no waiting, no queue.',
+  },
+];
+
+const steps = [
+  { n: 1, title: 'Upload your PDF', body: 'Drag and drop or click to upload. Sonoro accepts any PDF up to your plan limit.' },
+  { n: 2, title: 'Choose a voice', body: 'Preview voices before committing. Pick the accent, tone, and speed that suits your content.' },
+  { n: 3, title: 'Listen anywhere', body: 'Stream directly in your browser or download the audio file to take with you offline.' },
+];
+
+const faqs = [
+  {
+    q: 'What types of PDFs does Sonoro support?',
+    a: 'Sonoro works with any text-based PDF: textbooks, reports, academic papers, contracts, e-books, and more. Scanned image PDFs require OCR, which is available on paid plans.',
+  },
+  {
+    q: 'How long does conversion take?',
+    a: 'Most documents are ready in under 60 seconds. Longer PDFs (100+ pages) may take a few minutes. You\'ll see a live progress indicator throughout.',
+  },
+  {
+    q: 'Can I choose different voices?',
+    a: 'Yes. Sonoro offers dozens of high-quality neural voices across multiple languages and accents. You can preview any voice before starting conversion.',
+  },
+  {
+    q: 'Is there a free plan?',
+    a: 'Yes — the free plan lets you convert a set number of pages per month with no credit card required. Paid plans unlock higher limits and premium voices.',
+  },
+  {
+    q: 'Can I download the audio file?',
+    a: 'Yes. All converted audiobooks can be downloaded as MP3 files for offline listening on any device.',
+  },
+];
+
+const faqSchema = {
+  '@context': 'https://schema.org',
+  '@type': 'FAQPage',
+  mainEntity: faqs.map((f) => ({
+    '@type': 'Question',
+    name: f.q,
+    acceptedAnswer: { '@type': 'Answer', text: f.a },
+  })),
+};
+---
+
+<MarketingLayout
+  title="PDF to Audiobook Converter — Sonoro"
+  description="Convert any PDF into a studio-quality audiobook in under 60 seconds. Natural AI voices, any document. Free to start."
+  canonical={`${siteUrl}/pdf-to-audiobook`}
+  extraSchema={faqSchema}
+>
+  <LandingTemplate
+    heading="Turn Any PDF into a Polished Audiobook"
+    tagline="Upload a textbook, report, or paper. Sonoro converts it into professional-quality audio in under 60 seconds — hands-free listening for anything you read."
+    {benefits}
+    {steps}
+    {faqs}
+    ctaText="Convert your first PDF — free"
+  />
+</MarketingLayout>

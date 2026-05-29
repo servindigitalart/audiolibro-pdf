@@ -229,6 +229,35 @@ class WebhookService:
             user.id, old_plan, tier or old_plan, subscription_id,
         )
 
+        # ── Affiliate conversion attribution ───────────────────────────────────
+        # Idempotent: stripe_event_id unique constraint prevents double-counting.
+        # Errors are caught internally — never block the main checkout flow.
+        try:
+            from app.affiliate.affiliate_service import AffiliateService
+            from app.pricing.tiers import TIER_CATALOG, PlanTier
+
+            plan_name = tier or user.plan_tier
+            amount_cents = session_obj.get("amount_total") or 0
+            if amount_cents:
+                amount_usd = amount_cents / 100.0
+            else:
+                try:
+                    amount_usd = TIER_CATALOG[PlanTier(plan_name)].monthly_price_usd
+                except (KeyError, ValueError):
+                    amount_usd = 0.0
+
+            await AffiliateService.record_conversion(
+                self._session,
+                user_id=user.id,
+                stripe_event_id=event.stripe_event_id,
+                stripe_customer_id=customer_id,
+                stripe_subscription_id=subscription_id,
+                plan_tier=plan_name,
+                amount_usd=amount_usd,
+            )
+        except Exception as exc:
+            logger.warning("affiliate_conversion_hook_error user_id=%s error=%s", user.id, exc)
+
     async def _on_invoice_paid(self, data: dict, event: WebhookEvent) -> None:
         sub_obj = data.get("data", {}).get("object", {})
         customer_id = sub_obj.get("customer")

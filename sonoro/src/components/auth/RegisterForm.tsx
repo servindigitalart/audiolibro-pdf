@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { register, getErrorMessage } from '@/lib/api/client';
+import { getReferralCode, getOrCreateVisitorId, clearReferralCode } from '@/lib/referral';
 import { cn } from '@/lib/utils';
 
 interface Props {
@@ -23,7 +24,10 @@ export default function RegisterForm({ initialPlan }: Props) {
     setError(null);
     setLoading(true);
     try {
-      await register(email, password);
+      const referralCode = getReferralCode() ?? undefined;
+      const visitorId = referralCode ? getOrCreateVisitorId() || undefined : undefined;
+      await register(email, password, referralCode, visitorId);
+      if (referralCode) clearReferralCode();
       window.location.href = initialPlan
         ? `/dashboard/billing?upgrade=${initialPlan}`
         : '/onboarding';

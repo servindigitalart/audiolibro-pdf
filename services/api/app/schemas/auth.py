@@ -13,13 +13,23 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 
 class RegisterRequest(BaseModel):
     """User registration request."""
-    
+
     email: EmailStr = Field(..., description="User email address")
     password: str = Field(
-        ..., 
-        min_length=8, 
+        ...,
+        min_length=8,
         max_length=100,
         description="Password (min 8 characters)"
+    )
+    referral_code: Optional[str] = Field(
+        default=None,
+        max_length=50,
+        description="Affiliate referral code (optional)",
+    )
+    visitor_id: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description="Anonymous visitor ID for click-to-signup attribution",
     )
     
     @field_validator("password")

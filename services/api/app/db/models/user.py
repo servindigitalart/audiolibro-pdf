@@ -89,6 +89,12 @@ class User(Base):
         String(255), nullable=True, index=True
     )
     
+    # Affiliate Attribution (Phase 5A)
+    referred_by_affiliate_id: Mapped[Optional[UUID]] = mapped_column(
+        nullable=True, index=True,
+        comment="Affiliate whose referral code was used at signup"
+    )
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

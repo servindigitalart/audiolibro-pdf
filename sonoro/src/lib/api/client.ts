@@ -90,10 +90,48 @@ export async function login(email: string, password: string) {
   return data;
 }
 
-export async function register(email: string, password: string) {
-  const { data } = await api.post('/auth/register', { email, password });
+export async function register(
+  email: string,
+  password: string,
+  referralCode?: string,
+  visitorId?: string,
+) {
+  const { data } = await api.post('/auth/register', {
+    email,
+    password,
+    ...(referralCode ? { referral_code: referralCode } : {}),
+    ...(visitorId    ? { visitor_id:   visitorId    } : {}),
+  });
   setTokens(data.access_token, data.refresh_token);
   return data;
+}
+
+// ── Affiliate API ─────────────────────────────────────────────────────────────
+
+export async function getAffiliateMe() {
+  const { data } = await api.get('/affiliate/me');
+  return data;
+}
+
+export async function getAffiliateDashboard() {
+  const { data } = await api.get('/affiliate/dashboard');
+  return data;
+}
+
+export async function trackReferralClick(
+  slug: string,
+  visitorId?: string,
+  landingPath?: string,
+) {
+  try {
+    await api.post('/referral/track', {
+      slug,
+      visitor_id: visitorId,
+      landing_path: landingPath,
+    });
+  } catch {
+    // Fire-and-forget — never surface errors
+  }
 }
 
 export async function logout() {

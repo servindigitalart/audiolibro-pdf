@@ -1,0 +1,82 @@
+---
+export const prerender = true;
+
+import MarketingLayout from '@/layouts/MarketingLayout.astro';
+import LandingTemplate from '@/components/marketing/LandingTemplate.astro';
+
+const siteUrl = import.meta.env.SITE_URL ?? import.meta.env.PUBLIC_SITE_URL ?? 'https://sonoro.app';
+
+const benefits = [
+  {
+    icon: 'M19 11a7 7 0 0 1-7 7m0 0a7 7 0 0 1-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 0 1-3-3V5a3 3 0 0 1 6 0v6a3 3 0 0 1-3 3z',
+    title: 'Hands-free reading',
+    body: 'Listen while you commute, cook, exercise, or clean. Turn passive time into productive learning without sitting at a desk.',
+  },
+  {
+    icon: 'M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3',
+    title: 'Immersive audio player',
+    body: 'Built-in player with chapter navigation, variable speed, and a continue-listening feature that remembers exactly where you stopped.',
+  },
+  {
+    icon: 'M12 18h.01M8 21h8a2 2 0 0 0 2-2v-1a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v1a2 2 0 0 0 2 2zM10 6h4M10 9h4M6 6a6 6 0 0 0 12 0v3a6 6 0 0 1-12 0V6z',
+    title: 'Works on every device',
+    body: 'Listen in your browser on desktop, tablet, or phone. Download the MP3 and play it in any podcast app on iOS or Android.',
+  },
+];
+
+const steps = [
+  { n: 1, title: 'Upload your PDF', body: 'Drop in any document — research paper, e-book, report, or textbook. Any PDF works.' },
+  { n: 2, title: 'Sonoro generates audio', body: 'Our AI reads your document aloud in a natural voice, preserving structure and flow.' },
+  { n: 3, title: 'Listen anywhere, anytime', body: 'Stream from your browser or download the file to listen offline — your choice.' },
+];
+
+const faqs = [
+  {
+    q: 'What kinds of PDFs can I listen to?',
+    a: 'Virtually any text-based PDF: academic papers, business reports, e-books, legal contracts, study guides, newsletters. If it has selectable text, Sonoro can read it.',
+  },
+  {
+    q: 'Can I listen at different speeds?',
+    a: 'Yes — the built-in player supports 0.75×, 1×, 1.25×, 1.5×, and 2× playback speed, just like any podcast app.',
+  },
+  {
+    q: 'Does it remember where I stopped?',
+    a: 'Yes. Sonoro tracks your listening progress and offers a "Continue Listening" prompt whenever you return to a document.',
+  },
+  {
+    q: 'Can I listen on my phone?',
+    a: 'Yes. The web player works on any modern mobile browser. You can also download the MP3 and load it into any podcast app.',
+  },
+  {
+    q: 'Is there a limit to how much I can listen?',
+    a: 'The free plan includes a generous monthly conversion quota. Paid plans remove practical limits for heavy readers.',
+  },
+];
+
+const faqSchema = {
+  '@context': 'https://schema.org',
+  '@type': 'FAQPage',
+  mainEntity: faqs.map((f) => ({
+    '@type': 'Question',
+    name: f.q,
+    acceptedAnswer: { '@type': 'Answer', text: f.a },
+  })),
+};
+---
+
+<MarketingLayout
+  title="Listen to Any PDF — Hands-Free Audio | Sonoro"
+  description="Convert PDFs to audio and listen hands-free — on your commute, at the gym, or anywhere. Natural AI voices, built-in player, offline download."
+  canonical={`${siteUrl}/listen-to-pdfs`}
+  extraSchema={faqSchema}
+>
+  <LandingTemplate
+    heading="Listen to Any PDF — Completely Hands-Free"
+    tagline="Stop reading, start listening. Sonoro turns your PDFs into clear, natural audio so you can absorb more content during time you'd otherwise waste."
+    badge="Hands-free · Works offline"
+    {benefits}
+    {steps}
+    {faqs}
+    ctaText="Start listening — free"
+  />
+</MarketingLayout>

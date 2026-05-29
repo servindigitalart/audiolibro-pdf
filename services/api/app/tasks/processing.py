@@ -267,6 +267,7 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
     from app.services.audio.metadata import AudioMetadataWriter, AudioMetadata
     from app.services.language.detector import detect_language
     from app.db.models.chapter import Chapter as ChapterModel
+    from app.db.models.user import User as UserModel
     from mutagen.mp3 import MP3 as MutagenMP3
     from app.financial.quota.quota_service import QuotaService
     from app.financial.cost.cost_enums import ActionType
@@ -277,6 +278,8 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
         audio_file_size_bytes,
         full_audiobook_generated_total,
     )
+    from app.pricing.unit_economics import UnitEconomicsEngine, CHARS_PER_LISTENING_HOUR
+    from app.pricing.tiers import PlanTier
 
     async with AsyncSessionLocal() as session:
         try:
@@ -716,6 +719,42 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
                     "[SONORO] quota_consumed user_id=%s chars=%d document_id=%s",
                     document.user_id, _chars_synthesized, document.id,
                 )
+
+            # ── Cost telemetry (Phase 3.6) ────────────────────────────────────
+            # Look up user's plan tier for accurate cost rate selection.
+            _user_result = await session.execute(
+                select(UserModel).where(UserModel.id == document.user_id)
+            )
+            _user_obj = _user_result.scalar_one_or_none()
+            _plan_tier_str = (_user_obj.plan_tier if _user_obj else "FREE") or "FREE"
+
+            try:
+                _plan_tier_enum = PlanTier(_plan_tier_str.upper())
+            except ValueError:
+                _plan_tier_enum = PlanTier.FREE
+
+            _economics = UnitEconomicsEngine()
+            _estimated_cost = _economics.user_cost(
+                _plan_tier_enum,
+                chars_used=_chars_synthesized,
+                storage_mb=0.0,  # storage tracked separately
+            )
+            _listening_hours = UnitEconomicsEngine.listening_hours_for_chars(_chars_synthesized)
+            _cost_per_hr = _economics.cost_per_listening_hour(_plan_tier_enum)
+
+            job.characters_processed  = _chars_synthesized
+            job.estimated_cost_usd    = round(_estimated_cost, 6)
+            job.plan_tier_at_generation = _plan_tier_str
+
+            logger.info(
+                "[SONORO] job_cost_estimated job_id=%s chars=%d estimated_cost_usd=%.4f plan_tier=%s",
+                job_id, _chars_synthesized, _estimated_cost, _plan_tier_str,
+            )
+            logger.info(
+                "[SONORO] listening_hour_computed job_id=%s listening_hours=%.2f "
+                "cost_per_hr_usd=%.4f document_id=%s",
+                job_id, _listening_hours, _cost_per_hr, document.id,
+            )
 
             job.status = JobStatus.COMPLETED
             job.progress_percentage = 100

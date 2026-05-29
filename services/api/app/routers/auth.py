@@ -80,7 +80,19 @@ async def register(
             password=data.password,
             db=db,
         )
-        
+
+        # Affiliate attribution — non-blocking, never fails registration
+        if data.referral_code:
+            from app.affiliate.affiliate_service import AffiliateService
+            attributed = await AffiliateService.attribute_signup(
+                db, user.id, data.referral_code, visitor_id=data.visitor_id
+            )
+            if attributed:
+                logger.info(
+                    "[SONORO] affiliate_signup_attributed user_id=%s slug=%s",
+                    user.id, data.referral_code,
+                )
+
         # Track successful registration
         increment_user_registration(success=True)
         

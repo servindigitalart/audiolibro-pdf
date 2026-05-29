@@ -241,6 +241,92 @@ async def reset_user_quota(
     }
 
 
+@router.get("/plan-economics")
+async def get_plan_economics(
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Real per-plan average cost from completed jobs with cost telemetry.
+
+    **Admin only**
+
+    Requires migration 021 (plan_tier_at_generation column).  Returns empty
+    list until at least one job has completed after the migration is applied.
+
+    Returns per-tier: job_count, avg_cost_usd, total_cost_usd, avg_chars.
+    Also appends theoretical unit economics from UnitEconomicsEngine for
+    comparison against observed averages.
+    """
+    from app.pricing.unit_economics import UnitEconomicsEngine
+    from app.pricing.tiers import PlanTier
+
+    observed = await CostTracker.get_plan_economics(db)
+
+    engine = UnitEconomicsEngine()
+    theoretical = {
+        tier.value: {
+            "cost_per_listening_hour_usd": round(engine.cost_per_listening_hour(tier), 4),
+            "break_even_utilization": round(
+                engine.tier_economics(tier).break_even_utilization, 4
+            ),
+            "gross_margin_pct_at_60pct": round(
+                engine.tier_economics(tier, 0.60).gross_margin_pct, 1
+            ),
+        }
+        for tier in PlanTier
+    }
+
+    logger.info(
+        "admin_plan_economics_accessed",
+        admin_id=str(current_user.id),
+        admin_email=current_user.email,
+        observed_tier_count=len(observed),
+    )
+
+    return {
+        "observed": observed,
+        "theoretical": theoretical,
+        "accessed_by": current_user.email,
+        "accessed_at": datetime.utcnow().isoformat(),
+    }
+
+
+@router.get("/expensive-jobs")
+async def get_expensive_jobs(
+    limit: int = Query(default=20, ge=1, le=100, description="Number of jobs to return"),
+    days: int = Query(default=30, ge=1, le=365, description="Lookback window in days"),
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Top N most expensive completed jobs in the lookback window.
+
+    **Admin only**
+
+    Ordered by estimated_cost_usd descending.  Useful for identifying
+    outlier users and runaway processing before they impact margins.
+    """
+    jobs = await CostTracker.get_expensive_jobs(db, limit=limit, days=days)
+
+    logger.info(
+        "admin_expensive_jobs_accessed",
+        admin_id=str(current_user.id),
+        admin_email=current_user.email,
+        limit=limit,
+        days=days,
+        result_count=len(jobs),
+    )
+
+    return {
+        "jobs": jobs,
+        "limit": limit,
+        "days": days,
+        "accessed_by": current_user.email,
+        "accessed_at": datetime.utcnow().isoformat(),
+    }
+
+
 @router.get("/cost/alert-status")
 async def get_cost_alert_status(
     current_user: User = Depends(require_admin),

@@ -7,6 +7,8 @@ export interface Props {
   ogImage?: string;
   canonical?: string;
   noIndex?: boolean;
+  /** Additional JSON-LD schema object(s) injected alongside the base SoftwareApplication schema */
+  extraSchema?: Record<string, unknown> | Record<string, unknown>[];
 }
 
 const {
@@ -15,10 +17,43 @@ const {
   ogImage = '/og.png',
   canonical,
   noIndex = false,
+  extraSchema,
 } = Astro.props;
 
-const canonicalUrl = canonical ?? Astro.url.href;
-const appUrl = import.meta.env.PUBLIC_APP_URL ?? 'https://sonoro.app';
+const appUrl =
+  import.meta.env.PUBLIC_SITE_URL ??
+  import.meta.env.PUBLIC_APP_URL ??
+  'https://sonoro.app';
+
+const gscVerification = import.meta.env.PUBLIC_GOOGLE_SITE_VERIFICATION ?? '';
+
+// Strip tracking params (?ref=, ?utm_*) from canonical to prevent duplicate-URL indexing
+const _rawUrl = new URL(canonical ?? Astro.url.href);
+['ref', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'].forEach(
+  (p) => _rawUrl.searchParams.delete(p),
+);
+const canonicalUrl = _rawUrl.toString();
+
+const baseSchema = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    {
+      '@type': 'SoftwareApplication',
+      name: 'Sonoro',
+      applicationCategory: 'ProductivityApplication',
+      operatingSystem: 'Web',
+      description,
+      url: appUrl,
+      offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+    },
+    {
+      '@type': 'Organization',
+      name: 'Sonoro',
+      url: appUrl,
+      logo: { '@type': 'ImageObject', url: `${appUrl}/favicon.svg` },
+    },
+  ],
+};
 ---
 
 <!doctype html>
@@ -37,7 +72,6 @@ const appUrl = import.meta.env.PUBLIC_APP_URL ?? 'https://sonoro.app';
       href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
       media="all"
     />
-    <!-- Progressively load: initially apply print media so it doesn't block render -->
     <script is:inline>
       (function(){var l=document.getElementById('font-inter');if(l){l.media='print';l.onload=function(){l.media='all';l.onload=null;}}})();
     </script>
@@ -46,7 +80,11 @@ const appUrl = import.meta.env.PUBLIC_APP_URL ?? 'https://sonoro.app';
     <title>{title}</title>
     <meta name="description" content={description} />
     <link rel="canonical" href={canonicalUrl} />
-    {noIndex && <meta name="robots" content="noindex, nofollow" />}
+    {noIndex
+      ? <meta name="robots" content="noindex, nofollow" />
+      : <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
+    }
+    {gscVerification && <meta name="google-site-verification" content={gscVerification} />}
 
     <!-- Open Graph -->
     <meta property="og:type"        content="website" />
@@ -54,6 +92,7 @@ const appUrl = import.meta.env.PUBLIC_APP_URL ?? 'https://sonoro.app';
     <meta property="og:title"       content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:image"       content={`${appUrl}${ogImage}`} />
+    <meta property="og:site_name"   content="Sonoro" />
 
     <!-- Twitter Card -->
     <meta name="twitter:card"        content="summary_large_image" />
@@ -64,23 +103,13 @@ const appUrl = import.meta.env.PUBLIC_APP_URL ?? 'https://sonoro.app';
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 
-    <!-- Structured Data -->
-    <script type="application/ld+json">
-      {JSON.stringify({
-        "@context": "https://schema.org",
-        "@type": "SoftwareApplication",
-        "name": "Sonoro",
-        "applicationCategory": "ProductivityApplication",
-        "operatingSystem": "Web",
-        "description": description,
-        "url": appUrl,
-        "offers": {
-          "@type": "Offer",
-          "price": "0",
-          "priceCurrency": "USD"
-        }
-      })}
-    </script>
+    <!-- Base structured data (SoftwareApplication + Organization) -->
+    <script is:inline type="application/ld+json" set:html={JSON.stringify(baseSchema)} />
+
+    <!-- Page-specific structured data (FAQPage, etc.) -->
+    {extraSchema && (
+      <script is:inline type="application/ld+json" set:html={JSON.stringify(extraSchema)} />
+    )}
   </head>
 
   <body class="bg-sonoro-white text-sonoro-900 antialiased">
@@ -102,6 +131,21 @@ const appUrl = import.meta.env.PUBLIC_APP_URL ?? 'https://sonoro.app';
         );
         document.querySelectorAll('.reveal').forEach(function (el) { observer.observe(el); });
       })();
+    </script>
+
+    <!-- Attribution capture: referral code + UTM params on first landing -->
+    <script>
+      import { captureReferralCode, captureUtmParams, getOrCreateVisitorId } from '@/lib/referral';
+      import { trackReferralClick } from '@/lib/api/client';
+
+      const params = new URLSearchParams(window.location.search);
+      const ref = params.get('ref');
+      if (ref) {
+        captureReferralCode();
+        const visitorId = getOrCreateVisitorId();
+        trackReferralClick(ref, visitorId || undefined, window.location.pathname);
+      }
+      captureUtmParams();
     </script>
   </body>
 </html>

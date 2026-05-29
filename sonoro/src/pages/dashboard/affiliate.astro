@@ -1,0 +1,11 @@
+---
+import DashboardLayout from '@/layouts/DashboardLayout.astro';
+import AffiliatePanel from '@/components/affiliate/AffiliatePanel';
+
+const token = (Astro.locals as any).token as string | undefined;
+if (!token) return Astro.redirect('/login');
+---
+
+<DashboardLayout title="Affiliate Dashboard — Sonoro">
+  <AffiliatePanel client:load />
+</DashboardLayout>

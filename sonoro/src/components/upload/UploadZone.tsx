@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { track } from '@/lib/analytics';
 import { useDropzone } from 'react-dropzone';
 import {
   uploadDocument,
@@ -150,6 +151,18 @@ export default function UploadZone() {
   const [duplicate, setDuplicate]         = useState<DuplicateInfo | null>(null);
   const [startingConversion, setStartingConversion] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Analytics ──────────────────────────────────────────────────────────────
+
+  const paywallVisible = stage === 'preflight' && !!preflight?.quota_exceeded;
+  useEffect(() => {
+    if (!paywallVisible || !preflight) return;
+    track('paywall_viewed', {
+      plan:            preflight.plan_display_name,
+      chars_required:  preflight.estimated_characters,
+      chars_limit:     preflight.chars_limit,
+    });
+  }, [paywallVisible]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Polling ────────────────────────────────────────────────────────────────
 
@@ -337,28 +350,43 @@ export default function UploadZone() {
             </div>
 
             {/* Quota stats */}
-            <div className="grid grid-cols-3 gap-3 mb-8">
-              <div className="rounded-xl bg-red-50 border border-red-100 px-4 py-3 text-center">
-                <p className="text-[10px] font-semibold text-red-400 uppercase tracking-wider mb-1.5">Required</p>
-                <p className="text-sm font-bold text-red-700">{fmtChars(preflight.estimated_characters)}</p>
-                <p className="text-[10px] text-red-400 mt-0.5">characters</p>
-              </div>
-              <div className="rounded-xl bg-sonoro-surface border border-sonoro-border/60 px-4 py-3 text-center">
-                <p className="text-[10px] font-semibold text-sonoro-400 uppercase tracking-wider mb-1.5">Plan limit</p>
-                <p className="text-sm font-bold text-sonoro-700">{fmtChars(preflight.chars_limit)}</p>
-                <p className="text-[10px] text-sonoro-400 mt-0.5">per month</p>
-              </div>
-              <div className="rounded-xl bg-sonoro-surface border border-sonoro-border/60 px-4 py-3 text-center">
-                <p className="text-[10px] font-semibold text-sonoro-400 uppercase tracking-wider mb-1.5">Length</p>
-                <p className="text-sm font-bold text-sonoro-700">{durLabel}</p>
-                <p className="text-[10px] text-sonoro-400 mt-0.5">audiobook</p>
-              </div>
-            </div>
+            {(() => {
+              const CHARS_PER_HR = 50_000;
+              const limitHrs = preflight.chars_limit / CHARS_PER_HR;
+              const limitHrsLabel = limitHrs >= 1
+                ? `~${Math.round(limitHrs)}h audio/mo`
+                : `~${Math.round(limitHrs * 60)}m audio/mo`;
+              return (
+                <div className="grid grid-cols-3 gap-3 mb-8">
+                  <div className="rounded-xl bg-red-50 border border-red-100 px-4 py-3 text-center">
+                    <p className="text-[10px] font-semibold text-red-400 uppercase tracking-wider mb-1.5">Required</p>
+                    <p className="text-sm font-bold text-red-700">{fmtChars(preflight.estimated_characters)}</p>
+                    <p className="text-[10px] text-red-400 mt-0.5">characters</p>
+                  </div>
+                  <div className="rounded-xl bg-sonoro-surface border border-sonoro-border/60 px-4 py-3 text-center">
+                    <p className="text-[10px] font-semibold text-sonoro-400 uppercase tracking-wider mb-1.5">Plan limit</p>
+                    <p className="text-sm font-bold text-sonoro-700">{fmtChars(preflight.chars_limit)}</p>
+                    <p className="text-[10px] text-sonoro-400 mt-0.5">per month</p>
+                    <p className="text-[10px] text-sonoro-300 mt-0.5">{limitHrsLabel}</p>
+                  </div>
+                  <div className="rounded-xl bg-sonoro-surface border border-sonoro-border/60 px-4 py-3 text-center">
+                    <p className="text-[10px] font-semibold text-sonoro-400 uppercase tracking-wider mb-1.5">Length</p>
+                    <p className="text-sm font-bold text-sonoro-700">{durLabel}</p>
+                    <p className="text-[10px] text-sonoro-400 mt-0.5">audiobook</p>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* CTAs */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
               <a
                 href="/dashboard/billing"
+                onClick={() => track('upgrade_clicked', {
+                  trigger:        'quota_exceeded',
+                  plan:           preflight.plan_display_name,
+                  chars_required: preflight.estimated_characters,
+                })}
                 className="btn-accent py-2.5 px-6 rounded-full text-sm flex items-center justify-center gap-2"
               >
                 <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">

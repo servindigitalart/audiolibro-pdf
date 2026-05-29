@@ -102,6 +102,12 @@ class TierConfig:
     # ── Upgrade path ──────────────────────────────────────────────────────────
     upgrades_to: Optional[PlanTier] = None  # None means top tier
 
+    # ── Listening-hour estimates (conservative, for UX copy + plan calibration) ─
+    # Derived from monthly_chars / CHARS_PER_LISTENING_HOUR (~50K chars/hr).
+    # Stored as a range to communicate uncertainty honestly.
+    approx_listening_hours_min: float = 0.0
+    approx_listening_hours_max: float = 0.0
+
     # ── Trial eligibility ─────────────────────────────────────────────────────
     trial_days: int = 0
 
@@ -133,6 +139,10 @@ TIER_CATALOG: dict[PlanTier, TierConfig] = {
         warn_usage_pct=0.80,
         block_usage_pct=1.00,
 
+        # 10K chars / 50K chars-per-hr = 0.2h theoretical; conservative 0.1–0.2h
+        approx_listening_hours_min=0.1,
+        approx_listening_hours_max=0.2,
+
         features=frozenset({
             TierFeature.DOCUMENT_UPLOAD,
             TierFeature.TTS_PROCESSING,
@@ -162,6 +172,10 @@ TIER_CATALOG: dict[PlanTier, TierConfig] = {
 
         warn_usage_pct=0.80,
         block_usage_pct=1.00,
+
+        # 100K chars / 50K chars-per-hr = 2h theoretical; conservative 1.0–2h
+        approx_listening_hours_min=1.0,
+        approx_listening_hours_max=2.0,
 
         features=frozenset({
             TierFeature.DOCUMENT_UPLOAD,
@@ -194,6 +208,10 @@ TIER_CATALOG: dict[PlanTier, TierConfig] = {
 
         warn_usage_pct=0.80,
         block_usage_pct=1.00,
+
+        # 500K chars / 50K chars-per-hr = 10h theoretical; conservative 7–10h
+        approx_listening_hours_min=7.0,
+        approx_listening_hours_max=10.0,
 
         features=frozenset({
             TierFeature.DOCUMENT_UPLOAD,
@@ -230,6 +248,10 @@ TIER_CATALOG: dict[PlanTier, TierConfig] = {
 
         warn_usage_pct=0.75,            # warn earlier (larger consequence)
         block_usage_pct=0.95,           # soft cap at 95% to preserve margin
+
+        # 5M chars / 50K chars-per-hr = 100h theoretical; conservative 50–100h
+        approx_listening_hours_min=50.0,
+        approx_listening_hours_max=100.0,
 
         features=frozenset({
             TierFeature.DOCUMENT_UPLOAD,

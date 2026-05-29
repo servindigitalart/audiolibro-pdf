@@ -1,0 +1,84 @@
+---
+export const prerender = true;
+
+import MarketingLayout from '@/layouts/MarketingLayout.astro';
+import LandingTemplate from '@/components/marketing/LandingTemplate.astro';
+
+const siteUrl = import.meta.env.SITE_URL ?? import.meta.env.PUBLIC_SITE_URL ?? 'https://sonoro.app';
+
+const benefits = [
+  {
+    icon: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253',
+    title: 'Get through more reading',
+    body: 'Students who listen at 1.5× speed cover the same material 50% faster than reading. Stay on top of your syllabus without burning out.',
+  },
+  {
+    icon: 'M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3',
+    title: 'Study anywhere, anytime',
+    body: 'Listen to lecture notes on the bus, revision guides at the gym, or assigned readings during your lunch break. Your phone becomes your study desk.',
+  },
+  {
+    icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z',
+    title: 'Retain more, stress less',
+    body: 'Dual-coding — reading and listening simultaneously — has been shown to improve retention. Sonoro makes it easy to do both.',
+  },
+];
+
+const steps = [
+  { n: 1, title: 'Upload your study material', body: 'Textbook chapters, lecture notes, past papers, journal articles — any PDF works.' },
+  { n: 2, title: 'Pick your speed and voice', body: 'Start at 1× and work up to 1.5× as you get comfortable. Your settings are remembered.' },
+  { n: 3, title: 'Listen and retain', body: 'Use the chapter navigator to revisit tricky sections. Resume exactly where you left off every session.' },
+];
+
+const faqs = [
+  {
+    q: 'Can I use Sonoro for university textbooks?',
+    a: 'Yes. Sonoro works with any PDF — including dense academic textbooks with charts and footnotes. It reads the main text flow clearly, skipping over figure captions and page headers intelligently.',
+  },
+  {
+    q: 'Is Sonoro accessible for students with dyslexia?',
+    a: 'Absolutely. Many students with dyslexia, ADHD, or reading difficulties find audio-first learning significantly more effective. Sonoro converts any text document into audio at the touch of a button.',
+  },
+  {
+    q: 'How fast can I listen?',
+    a: 'The player supports speeds from 0.75× to 2×. Most students settle into 1.25× or 1.5× after a few sessions, which cuts study time without sacrificing comprehension.',
+  },
+  {
+    q: 'Does it work with research papers and academic PDFs?',
+    a: 'Yes. Sonoro is well-suited for academic PDFs — it handles multi-column layouts, reference sections, and abstract formatting better than generic TTS tools.',
+  },
+  {
+    q: 'Is Sonoro free for students?',
+    a: 'Yes. The free plan is generous enough for regular student use. If you read a lot, paid plans start at a very affordable monthly rate.',
+  },
+];
+
+const faqSchema = {
+  '@context': 'https://schema.org',
+  '@type': 'FAQPage',
+  mainEntity: faqs.map((f) => ({
+    '@type': 'Question',
+    name: f.q,
+    acceptedAnswer: { '@type': 'Answer', text: f.a },
+  })),
+};
+---
+
+<MarketingLayout
+  title="PDF Reader for Students — Listen to Textbooks & Notes | Sonoro"
+  description="The PDF reader that reads back to you. Convert textbooks, lecture notes, and research papers to audio. Study faster, retain more. Free for students."
+  canonical={`${siteUrl}/student-pdf-reader`}
+  extraSchema={faqSchema}
+>
+  <LandingTemplate
+    heading="The PDF Reader That Reads Back to You"
+    tagline="Stop fighting your reading list. Sonoro converts your textbooks, lecture notes, and research papers into audio so you can study on the go — and actually remember what you heard."
+    badge="Built for students · Free plan available"
+    {benefits}
+    {steps}
+    {faqs}
+    ctaText="Start studying smarter — free"
+    secondaryCtaHref="/pricing"
+    secondaryCtaText="Student pricing"
+  />
+</MarketingLayout>

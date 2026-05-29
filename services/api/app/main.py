@@ -175,6 +175,11 @@ from app.pricing.router import public_router as pricing_public_router  # Pricing
 from app.pricing.router import internal_router as pricing_internal_router  # Admin pricing
 from app.routers.oauth import router as oauth_router  # Google OAuth exchange
 from app.routers.voices import router as voices_router  # Voice preview samples
+from app.routers.analytics import router as analytics_router  # Behavioral analytics
+from app.routers.admin_analytics import router as admin_analytics_router  # Admin analytics
+from app.routers.admin_dashboard import router as admin_dashboard_router  # Admin intelligence dashboard
+from app.routers.admin_affiliates import router as admin_affiliates_router, _conv_router as admin_conversions_router  # Affiliate management
+from app.routers.affiliate import referral_router, affiliate_router  # Public referral + creator dashboard
 
 # Billing enforcement middleware — feature-flagged, defaults off so existing tests pass
 app.add_middleware(BillingEnforcementMiddleware)
@@ -194,6 +199,13 @@ app.include_router(pricing_public_router)  # Public pricing tier catalog
 app.include_router(pricing_internal_router)  # Admin pricing + economics
 app.include_router(oauth_router)  # Google OAuth exchange
 app.include_router(voices_router)  # Voice preview samples
+app.include_router(analytics_router)        # Behavioral analytics (DB-persisted)
+app.include_router(admin_analytics_router)  # Admin analytics visibility
+app.include_router(admin_dashboard_router)  # Admin intelligence dashboard
+app.include_router(admin_affiliates_router) # Affiliate CRUD + performance
+app.include_router(admin_conversions_router) # Conversion payout management
+app.include_router(referral_router)         # Public referral click + validate
+app.include_router(affiliate_router)        # Creator affiliate dashboard
 
 
 # Startup event log

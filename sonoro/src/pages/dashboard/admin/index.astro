@@ -1,0 +1,17 @@
+---
+/**
+ * Admin Intelligence Dashboard (Phase 4A)
+ * =========================================
+ * Internal command center for the Sonoro founder/operator.
+ * Protected: admin role required.  noIndex prevents crawling.
+ */
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import AdminDashboard from '@/components/admin/AdminDashboard';
+
+const token = (Astro.locals as any).token as string | undefined;
+if (!token) return Astro.redirect('/login');
+---
+
+<BaseLayout title="Admin — Sonoro" noIndex={true}>
+  <AdminDashboard client:load />
+</BaseLayout>

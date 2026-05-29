@@ -38,6 +38,10 @@ class AbusePattern(str, Enum):
     SUSPICIOUS_STORAGE_GROWTH = "suspicious_storage_growth"
     RAPID_ACCOUNT_CREATION = "rapid_account_creation"
     CREDENTIAL_STUFFING = "credential_stuffing"
+    # TTS-specific generation abuse patterns (Phase 3.6)
+    REPEATED_REGENERATION = "repeated_regeneration"
+    LARGE_PDF_REPEATED = "large_pdf_repeated"
+    MASS_RETRY = "mass_retry"
 
 
 # Prometheus metrics for abuse detection
@@ -342,6 +346,134 @@ class AbuseDetector:
             return result
         
         return None
+
+    async def check_generation_abuse(
+        self,
+        user_id: UUID,
+        document_id: Optional[str] = None,
+        chars_requested: int = 0,
+        lookback_hours: int = 24,
+        regen_threshold: int = 5,
+        large_pdf_chars: int = 200_000,
+        retry_threshold: int = 10,
+    ) -> Optional[dict]:
+        """
+        Detect TTS-generation–specific abuse patterns (log-only, no blocking).
+
+        Checks three signals in a single method to keep the call-site simple:
+          REPEATED_REGENERATION — same document regenerated many times in the window
+          LARGE_PDF_REPEATED    — large document (>large_pdf_chars chars) re-processed
+          MASS_RETRY            — excessive retry count across all of the user's jobs
+                                  within the window (indicates automation/exploitation)
+
+        Returns the first detected pattern, or None if clean.
+        """
+        abuse_checks_total.labels(check_type="generation_abuse").inc()
+
+        # ── Repeated regeneration of the same document ────────────────────────
+        if document_id:
+            regen_key = f"abuse:regen:{user_id}:{document_id}"
+            regen_count = await self.redis.get(regen_key)
+            count = int(regen_count) if regen_count else 0
+
+            if count >= regen_threshold:
+                severity = self._calculate_severity(count, regen_threshold)
+                result = {
+                    "pattern":        AbusePattern.REPEATED_REGENERATION,
+                    "severity":       severity,
+                    "user_id":        str(user_id),
+                    "document_id":    document_id,
+                    "regen_count":    count,
+                    "threshold":      regen_threshold,
+                    "window_hours":   lookback_hours,
+                    "detected_at":    datetime.utcnow().isoformat(),
+                }
+                abuse_patterns_detected.labels(
+                    pattern=AbusePattern.REPEATED_REGENERATION,
+                    severity=severity,
+                ).inc()
+                logger.warning("abuse_signal_detected", **result)
+                return result
+
+        # ── Large PDF repeatedly re-processed ────────────────────────────────
+        if chars_requested >= large_pdf_chars and document_id:
+            large_key = f"abuse:large_pdf:{user_id}:{document_id}"
+            large_count = await self.redis.get(large_key)
+            lcount = int(large_count) if large_count else 0
+
+            if lcount >= 2:
+                severity = AbuseSeverity.MEDIUM if lcount < 5 else AbuseSeverity.HIGH
+                result = {
+                    "pattern":          AbusePattern.LARGE_PDF_REPEATED,
+                    "severity":         severity,
+                    "user_id":          str(user_id),
+                    "document_id":      document_id,
+                    "chars_requested":  chars_requested,
+                    "reprocess_count":  lcount,
+                    "window_hours":     lookback_hours,
+                    "detected_at":      datetime.utcnow().isoformat(),
+                }
+                abuse_patterns_detected.labels(
+                    pattern=AbusePattern.LARGE_PDF_REPEATED,
+                    severity=severity,
+                ).inc()
+                logger.warning("abuse_signal_detected", **result)
+                return result
+
+        # ── Mass retry across all jobs ────────────────────────────────────────
+        retry_key = f"abuse:mass_retry:{user_id}"
+        retry_count_val = await self.redis.get(retry_key)
+        retries = int(retry_count_val) if retry_count_val else 0
+
+        if retries >= retry_threshold:
+            severity = self._calculate_severity(retries, retry_threshold)
+            result = {
+                "pattern":       AbusePattern.MASS_RETRY,
+                "severity":      severity,
+                "user_id":       str(user_id),
+                "retry_count":   retries,
+                "threshold":     retry_threshold,
+                "window_hours":  lookback_hours,
+                "detected_at":   datetime.utcnow().isoformat(),
+            }
+            abuse_patterns_detected.labels(
+                pattern=AbusePattern.MASS_RETRY,
+                severity=severity,
+            ).inc()
+            logger.warning("abuse_signal_detected", **result)
+            return result
+
+        return None
+
+    async def track_generation(
+        self,
+        user_id: UUID,
+        document_id: str,
+        chars: int,
+        ttl_seconds: int = 86_400,
+    ) -> None:
+        """
+        Increment generation counters so check_generation_abuse() has data.
+        Call this once per successful or attempted TTS job start.
+        """
+        regen_key  = f"abuse:regen:{user_id}:{document_id}"
+        await self.redis.incr(regen_key)
+        await self.redis.expire(regen_key, ttl_seconds)
+
+        if chars >= 200_000:
+            large_key = f"abuse:large_pdf:{user_id}:{document_id}"
+            await self.redis.incr(large_key)
+            await self.redis.expire(large_key, ttl_seconds)
+
+    async def track_job_retry(
+        self,
+        user_id: UUID,
+        ttl_seconds: int = 86_400,
+    ) -> None:
+        """Increment the user's retry counter (call on every Celery retry)."""
+        retry_key = f"abuse:mass_retry:{user_id}"
+        await self.redis.incr(retry_key)
+        await self.redis.expire(retry_key, ttl_seconds)
 
     async def check_all_patterns(
         self,

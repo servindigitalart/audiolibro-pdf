@@ -16,6 +16,7 @@ from sqlalchemy import (
     Column,
     String,
     Integer,
+    Float,
     ForeignKey,
     DateTime,
     Enum,
@@ -148,6 +149,23 @@ class ProcessingJob(Base):
         comment="Pipeline stage: analyzing | chapter_detection | tts_generation | final_assembly | upload_finalize"
     )
     
+    # Cost telemetry (Phase 3.6 — migration 021)
+    characters_processed = Column(
+        Integer,
+        nullable=True,
+        comment="TTS characters actually synthesised (exact, set on completion)"
+    )
+    estimated_cost_usd = Column(
+        Float,
+        nullable=True,
+        comment="Estimated TTS+infra cost for this job in USD (set on completion)"
+    )
+    plan_tier_at_generation = Column(
+        String(20),
+        nullable=True,
+        comment="User's plan tier when this job ran (FREE/BASIC/PRO/ENTERPRISE)"
+    )
+
     # Error handling
     error_message = Column(
         Text,

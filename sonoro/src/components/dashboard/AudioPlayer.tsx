@@ -5,6 +5,7 @@ import { usePlaybackProgress } from '@/hooks/usePlaybackProgress';
 import { fmtDuration } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import BookCover from '@/components/ui/BookCover';
+import { track, startPlaybackSession, endPlaybackSession } from '@/lib/analytics';
 
 // Deterministic waveform heights — two overlapping sine waves give a natural shape
 const WAVEFORM = Array.from({ length: 60 }, (_, i) =>
@@ -757,7 +758,39 @@ export default function AudioPlayer({ chapters, documentTitle, documentId = '', 
     isPlaying,
   );
 
-  // Autoplay on mount when navigated with ?autoplay=1
+  // ── Analytics: session tracking ───────────────────────────────────────────
+  const sessionIdRef = useRef<string | null>(null);
+  const sessionSourceRef = useRef<'direct' | 'autoplay'>('direct');
+  if (autoplay) sessionSourceRef.current = 'autoplay';
+
+  // Fire player_opened once on mount
+  useEffect(() => {
+    if (!documentId) return;
+    track('player_opened', { document_id: documentId });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Start session on first play; end session on unmount
+  useEffect(() => {
+    if (!isPlaying || sessionIdRef.current || !documentId) return;
+    void startPlaybackSession(documentId, sessionSourceRef.current, autoplay)
+      .then(id => { sessionIdRef.current = id; });
+  }, [isPlaying]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    return () => {
+      if (!sessionIdRef.current) return;
+      const pct = totalDuration > 0 ? Math.min(100, (currentTime / totalDuration) * 100) : 0;
+      void endPlaybackSession(sessionIdRef.current, Math.round(currentTime), pct, speed, [currentIdx]);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Track chapter changes
+  useEffect(() => {
+    if (!documentId || currentIdx < 0) return;
+    track('chapter_changed', { document_id: documentId, chapter_index: currentIdx });
+  }, [currentIdx]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Autoplay on mount when navigated with ?autoplay=1 ─────────────────────
   useEffect(() => {
     if (!autoplay) return;
     const audio = audioRef.current;
@@ -783,6 +816,15 @@ export default function AudioPlayer({ chapters, documentTitle, documentId = '', 
       if (!hasNext) {
         setIsCompleted(true);
         console.log('[SONORO] playback_completed', documentId);
+        track('audiobook_completed', {
+          document_id:      documentId,
+          duration_seconds: totalDuration,
+          chapter_count:    chapters.length,
+        });
+        if (sessionIdRef.current) {
+          void endPlaybackSession(sessionIdRef.current, Math.round(totalDuration), 100, speed, [currentIdx]);
+          sessionIdRef.current = null;
+        }
       }
       originalOnEnded();
     },

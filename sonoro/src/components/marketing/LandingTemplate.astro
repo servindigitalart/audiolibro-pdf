@@ -1,0 +1,184 @@
+---
+/**
+ * Reusable landing page template.
+ * Used by all /pdf-to-audiobook, /ai-audiobook-generator, etc. pages.
+ * Renders: Hero → Benefits → How It Works → FAQ → CTA
+ */
+
+export interface Benefit {
+  icon: string; // inline SVG path data (viewBox 0 0 24 24)
+  title: string;
+  body: string;
+}
+
+export interface Step {
+  n: number;
+  title: string;
+  body: string;
+}
+
+export interface Faq {
+  q: string;
+  a: string;
+}
+
+export interface Props {
+  heading: string;
+  tagline: string;
+  badge?: string;
+  benefits: Benefit[];
+  steps: Step[];
+  faqs: Faq[];
+  ctaHref?: string;
+  ctaText?: string;
+  secondaryCtaHref?: string;
+  secondaryCtaText?: string;
+}
+
+const {
+  heading,
+  tagline,
+  badge = 'AI-powered PDF to audiobook',
+  benefits,
+  steps,
+  faqs,
+  ctaHref = '/register',
+  ctaText = 'Convert your first PDF — free',
+  secondaryCtaHref = '/pricing',
+  secondaryCtaText = 'See pricing',
+} = Astro.props;
+---
+
+<!-- ── Hero ───────────────────────────────────────────────────────────────── -->
+<section class="relative overflow-hidden bg-sonoro-white">
+  <div class="absolute inset-0 bg-grid pointer-events-none" aria-hidden="true"></div>
+  <div
+    class="absolute -top-32 left-1/2 -translate-x-1/2 w-[900px] h-[500px] glow-orb pointer-events-none"
+    style="background: radial-gradient(ellipse at center, rgba(254,243,199,0.6) 0%, rgba(245,158,11,0.07) 45%, transparent 70%);"
+    aria-hidden="true"
+  ></div>
+
+  <div class="relative mx-auto max-w-4xl px-6 pt-16 pb-20 text-center lg:px-8 lg:pt-20 lg:pb-28">
+    <div class="animate-fade-in" style="animation-delay:0s">
+      <span class="inline-flex items-center gap-2 rounded-full border border-sonoro-amber/25 bg-gradient-to-r from-sonoro-amber-light/70 to-sonoro-amber-light/40 px-4 py-1.5 text-xs font-semibold text-sonoro-amber-dark mb-8">
+        <span class="flex h-1.5 w-1.5 rounded-full bg-sonoro-amber animate-pulse" aria-hidden="true"></span>
+        {badge}
+      </span>
+    </div>
+
+    <h1
+      class="heading-display text-display-xl md:text-display-2xl text-balance mx-auto max-w-[18ch] animate-slide-up"
+      style="animation-delay:0.08s"
+    >
+      {heading}
+    </h1>
+
+    <p
+      class="mt-6 text-lg leading-relaxed text-sonoro-600 max-w-[46ch] mx-auto text-balance animate-slide-up"
+      style="animation-delay:0.16s"
+    >
+      {tagline}
+    </p>
+
+    <div class="mt-10 flex flex-wrap items-center justify-center gap-4 animate-slide-up" style="animation-delay:0.24s">
+      <a
+        href={ctaHref}
+        class="btn-accent px-8 py-3.5 rounded-full text-base font-semibold shadow-md hover:shadow-lg transition-shadow"
+      >
+        {ctaText}
+      </a>
+      <a
+        href={secondaryCtaHref}
+        class="text-sm font-medium text-sonoro-600 underline-offset-4 hover:underline hover:text-sonoro-900 transition-colors"
+      >
+        {secondaryCtaText}
+      </a>
+    </div>
+
+    <!-- Social trust line -->
+    <p class="mt-8 text-xs text-sonoro-muted animate-fade-in" style="animation-delay:0.4s">
+      No credit card required · Converts in under 60 seconds
+    </p>
+  </div>
+</section>
+
+<!-- ── Benefits ───────────────────────────────────────────────────────────── -->
+<section class="bg-sonoro-surface py-20">
+  <div class="mx-auto max-w-5xl px-6 lg:px-8">
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+      {benefits.map((b) => (
+        <div class="reveal flex flex-col gap-4 rounded-2xl border border-sonoro-border bg-sonoro-white p-6 shadow-soft">
+          <div class="w-11 h-11 rounded-xl bg-gradient-to-br from-sonoro-amber-light to-amber-100 flex items-center justify-center shrink-0">
+            <svg class="w-5 h-5 text-sonoro-amber-dark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d={b.icon} />
+            </svg>
+          </div>
+          <div>
+            <h2 class="text-base font-semibold text-sonoro-900 mb-1">{b.title}</h2>
+            <p class="text-sm text-sonoro-600 leading-relaxed">{b.body}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+</section>
+
+<!-- ── How it works ───────────────────────────────────────────────────────── -->
+<section class="bg-sonoro-white py-20">
+  <div class="mx-auto max-w-3xl px-6 lg:px-8">
+    <h2 class="text-2xl font-bold text-sonoro-900 text-center mb-12">How it works</h2>
+    <ol class="space-y-8">
+      {steps.map((s) => (
+        <li class="reveal flex gap-6 items-start">
+          <span class="w-9 h-9 rounded-full bg-gradient-to-br from-sonoro-amber to-amber-500 text-white text-sm font-bold flex items-center justify-center shrink-0 mt-0.5 shadow-sm">
+            {s.n}
+          </span>
+          <div>
+            <h3 class="text-base font-semibold text-sonoro-900 mb-1">{s.title}</h3>
+            <p class="text-sm text-sonoro-600 leading-relaxed">{s.body}</p>
+          </div>
+        </li>
+      ))}
+    </ol>
+  </div>
+</section>
+
+<!-- ── FAQ ────────────────────────────────────────────────────────────────── -->
+<section class="bg-sonoro-surface py-20">
+  <div class="mx-auto max-w-2xl px-6 lg:px-8">
+    <h2 class="text-2xl font-bold text-sonoro-900 text-center mb-10">Frequently asked questions</h2>
+    <div class="space-y-3">
+      {faqs.map((f) => (
+        <details class="reveal group rounded-xl border border-sonoro-border bg-sonoro-white">
+          <summary class="flex cursor-pointer items-center justify-between gap-4 px-5 py-4 text-sm font-semibold text-sonoro-900 select-none marker:content-none list-none">
+            {f.q}
+            <svg class="w-4 h-4 text-sonoro-muted shrink-0 transition-transform group-open:rotate-180" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M4 6l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </summary>
+          <p class="px-5 pb-5 pt-1 text-sm text-sonoro-600 leading-relaxed border-t border-sonoro-border">{f.a}</p>
+        </details>
+      ))}
+    </div>
+  </div>
+</section>
+
+<!-- ── Bottom CTA ─────────────────────────────────────────────────────────── -->
+<section class="bg-sonoro-white py-20">
+  <div class="mx-auto max-w-2xl px-6 lg:px-8 text-center">
+    <h2 class="text-2xl font-bold text-sonoro-900 mb-4">Ready to listen smarter?</h2>
+    <p class="text-sonoro-600 mb-8 text-balance">
+      Join thousands of students and professionals who save time with Sonoro every day.
+    </p>
+    <a
+      href={ctaHref}
+      class="btn-accent inline-flex items-center gap-2 px-8 py-3.5 rounded-full text-base font-semibold shadow-md hover:shadow-lg transition-shadow"
+    >
+      {ctaText}
+      <svg class="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8">
+        <path d="M3 8h10M9 4l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </a>
+    <p class="mt-4 text-xs text-sonoro-muted">No credit card required. Free plan available.</p>
+  </div>
+</section>

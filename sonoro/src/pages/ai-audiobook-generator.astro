@@ -1,0 +1,82 @@
+---
+export const prerender = true;
+
+import MarketingLayout from '@/layouts/MarketingLayout.astro';
+import LandingTemplate from '@/components/marketing/LandingTemplate.astro';
+
+const siteUrl = import.meta.env.SITE_URL ?? import.meta.env.PUBLIC_SITE_URL ?? 'https://sonoro.app';
+
+const benefits = [
+  {
+    icon: 'M9.663 17h4.673M12 3v1m6.364 1.636-.707.707M21 12h-1M4 12H3m1.343-5.657-.707-.707m2.828 9.9a5 5 0 1 1 7.072 0l-.548.547A3.374 3.374 0 0 0 14 18.469V19a2 2 0 1 1-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z',
+    title: 'Powered by frontier AI',
+    body: 'Sonoro uses state-of-the-art neural text-to-speech — not the robotic voices of ten years ago. The difference is audible from the first sentence.',
+  },
+  {
+    icon: 'M3 5a2 2 0 0 1 2-2h3.28a1 1 0 0 1 .948.684l1.498 4.493a1 1 0 0 1-.502 1.21l-2.257 1.13a11.042 11.042 0 0 0 5.516 5.516l1.13-2.257a1 1 0 0 1 1.21-.502l4.493 1.498a1 1 0 0 1 .684.949V19a2 2 0 0 1-2 2h-1C9.716 21 3 14.284 3 6V5z',
+    title: 'Chapter-aware narration',
+    body: 'Sonoro intelligently segments your document into chapters, so you can skip, replay, and resume from exactly where you left off.',
+  },
+  {
+    icon: 'M4 16v1a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-1m-4-4-4 4m0 0-4-4m4 4V4',
+    title: 'Download and keep',
+    body: 'Your audiobooks are yours. Download MP3 files and listen offline — on your phone, in your car, or on your favourite podcast app.',
+  },
+];
+
+const steps = [
+  { n: 1, title: 'Upload any PDF', body: 'Drag in your document. Sonoro extracts the text and prepares it for narration instantly.' },
+  { n: 2, title: 'AI generates your audiobook', body: 'Our neural TTS engine reads your document aloud with natural intonation, pausing at headings and paragraphs.' },
+  { n: 3, title: 'Stream or download', body: 'Listen in your browser with our immersive player, or download the MP3 to take anywhere.' },
+];
+
+const faqs = [
+  {
+    q: 'What makes Sonoro different from other text-to-speech tools?',
+    a: 'Most TTS tools read text literally without understanding structure. Sonoro parses your PDF\'s layout — chapters, headings, footnotes — and narrates it intelligently, skipping noise and keeping flow.',
+  },
+  {
+    q: 'What voices are available?',
+    a: 'Sonoro offers a wide selection of natural-sounding neural voices in English, Spanish, French, German, and more. You can preview any voice before generating your audiobook.',
+  },
+  {
+    q: 'How is the audio quality?',
+    a: 'Sonoro uses the same generation models used by leading podcast platforms. The result sounds like a professional narrator, not a robot.',
+  },
+  {
+    q: 'Is there a page limit?',
+    a: 'Free accounts can convert a set number of pages per month. Paid plans unlock much higher limits — enough for entire textbooks or long reports in one go.',
+  },
+  {
+    q: 'Can I adjust the reading speed?',
+    a: 'Yes. The built-in player lets you listen at 0.75×, 1×, 1.25×, 1.5×, or 2× speed — just like a podcast app.',
+  },
+];
+
+const faqSchema = {
+  '@context': 'https://schema.org',
+  '@type': 'FAQPage',
+  mainEntity: faqs.map((f) => ({
+    '@type': 'Question',
+    name: f.q,
+    acceptedAnswer: { '@type': 'Answer', text: f.a },
+  })),
+};
+---
+
+<MarketingLayout
+  title="AI Audiobook Generator — Studio Quality in 60 Seconds | Sonoro"
+  description="Generate a professional audiobook from any PDF using AI. Natural neural voices, chapter-aware narration, instant download. No technical setup needed."
+  canonical={`${siteUrl}/ai-audiobook-generator`}
+  extraSchema={faqSchema}
+>
+  <LandingTemplate
+    heading="AI Audiobook Generator — Studio Quality, Instantly"
+    tagline="Upload any PDF and Sonoro's neural AI converts it into a professional audiobook in under 60 seconds. No editing, no recording, no technical setup."
+    badge="Neural AI · 60-second conversion"
+    {benefits}
+    {steps}
+    {faqs}
+    ctaText="Generate your first audiobook — free"
+  />
+</MarketingLayout>

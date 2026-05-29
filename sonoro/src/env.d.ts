@@ -4,6 +4,8 @@ interface ImportMetaEnv {
   // Public — exposed to browser bundles via Vite
   readonly PUBLIC_API_URL: string;
   readonly PUBLIC_APP_URL: string;
+  readonly PUBLIC_SITE_URL: string;
+  readonly PUBLIC_GOOGLE_SITE_VERIFICATION: string;
 
   // Private — server-side only (Astro API routes, SSR)
   readonly API_URL: string;
