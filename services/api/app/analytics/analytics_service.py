@@ -392,3 +392,170 @@ class AnalyticsService:
             )
 
         return voices
+
+    # ── Profile analytics ─────────────────────────────────────────────────────
+
+    @staticmethod
+    async def get_profile_selection_stats(db: AsyncSession, days: int = 30) -> list[dict]:
+        """
+        How often each narration profile is selected.
+
+        Source: narration_profile_selected events.
+        Returns a list sorted by selection count descending.
+        """
+        since = datetime.utcnow() - timedelta(days=days)
+
+        result = await db.execute(
+            select(
+                AnalyticsEvent.properties["profile"].as_string().label("profile"),
+                func.count(AnalyticsEvent.id).label("selections"),
+            )
+            .where(and_(
+                AnalyticsEvent.event_type == "narration_profile_selected",
+                AnalyticsEvent.created_at >= since,
+            ))
+            .group_by(AnalyticsEvent.properties["profile"].as_string())
+            .order_by(func.count(AnalyticsEvent.id).desc())
+        )
+
+        return [
+            {"profile": row.profile, "selections": row.selections}
+            for row in result
+            if row.profile
+        ]
+
+    @staticmethod
+    async def get_profile_generation_stats(db: AsyncSession, days: int = 30) -> list[dict]:
+        """
+        Audiobooks generated per profile, with average character count.
+
+        Source: audiobook_generated events.
+        """
+        since = datetime.utcnow() - timedelta(days=days)
+
+        result = await db.execute(
+            select(
+                AnalyticsEvent.properties["profile"].as_string().label("profile"),
+                func.count(AnalyticsEvent.id).label("audiobooks"),
+                func.avg(
+                    AnalyticsEvent.properties["chars_synthesized"].as_integer()
+                ).label("avg_chars"),
+            )
+            .where(and_(
+                AnalyticsEvent.event_type == "audiobook_generated",
+                AnalyticsEvent.created_at >= since,
+            ))
+            .group_by(AnalyticsEvent.properties["profile"].as_string())
+            .order_by(func.count(AnalyticsEvent.id).desc())
+        )
+
+        return [
+            {
+                "profile": row.profile,
+                "audiobooks_generated": row.audiobooks,
+                "avg_chars": round(float(row.avg_chars or 0)),
+            }
+            for row in result
+            if row.profile
+        ]
+
+    @staticmethod
+    async def get_profile_completion_rates(db: AsyncSession) -> list[dict]:
+        """
+        Average listening completion rate broken down by the narration profile
+        used to generate the audiobook.
+
+        Join path: PlaybackSession.document_id → ProcessingJob.document_id
+        → ProcessingJob.narration_style (most recent completed job per document).
+
+        Returns profiles sorted by avg_completion_pct descending.
+        """
+        from sqlalchemy import cast, Numeric
+        from sqlalchemy.dialects.postgresql import UUID as PGUUID
+        from app.db.models.processing_job import ProcessingJob, JobStatus
+
+        # Subquery: most recent completed job per document with its narration style
+        latest_job = (
+            select(
+                ProcessingJob.document_id,
+                ProcessingJob.narration_style,
+                func.row_number().over(
+                    partition_by=ProcessingJob.document_id,
+                    order_by=ProcessingJob.created_at.desc(),
+                ).label("rn"),
+            )
+            .where(ProcessingJob.status == JobStatus.COMPLETED)
+            .where(ProcessingJob.narration_style.isnot(None))
+            .subquery()
+        )
+
+        latest_job_filtered = (
+            select(
+                latest_job.c.document_id,
+                latest_job.c.narration_style,
+            )
+            .where(latest_job.c.rn == 1)
+            .subquery()
+        )
+
+        result = await db.execute(
+            select(
+                latest_job_filtered.c.narration_style.label("profile"),
+                func.count(PlaybackSession.id).label("sessions"),
+                func.avg(PlaybackSession.completion_percentage).label("avg_completion_pct"),
+                func.avg(PlaybackSession.listened_seconds).label("avg_listened_seconds"),
+            )
+            .join(
+                latest_job_filtered,
+                PlaybackSession.document_id == latest_job_filtered.c.document_id,
+            )
+            .group_by(latest_job_filtered.c.narration_style)
+            .order_by(func.avg(PlaybackSession.completion_percentage).desc())
+        )
+
+        return [
+            {
+                "profile": row.profile,
+                "sessions": row.sessions,
+                "avg_completion_pct": round(float(row.avg_completion_pct or 0), 1),
+                "avg_listened_seconds": round(float(row.avg_listened_seconds or 0)),
+            }
+            for row in result
+            if row.profile
+        ]
+
+    @staticmethod
+    async def get_top_voice_profile_combinations(
+        db: AsyncSession, days: int = 30
+    ) -> list[dict]:
+        """
+        Most generated voice+profile combinations, ordered by count.
+
+        Source: audiobook_generated events.
+        Useful for understanding which voice/style pairings users prefer.
+        """
+        since = datetime.utcnow() - timedelta(days=days)
+
+        result = await db.execute(
+            select(
+                AnalyticsEvent.properties["profile"].as_string().label("profile"),
+                AnalyticsEvent.properties["voice_id"].as_string().label("voice_id"),
+                func.count(AnalyticsEvent.id).label("count"),
+            )
+            .where(and_(
+                AnalyticsEvent.event_type == "audiobook_generated",
+                AnalyticsEvent.created_at >= since,
+            ))
+            .group_by(
+                AnalyticsEvent.properties["profile"].as_string(),
+                AnalyticsEvent.properties["voice_id"].as_string(),
+            )
+            .order_by(func.count(AnalyticsEvent.id).desc())
+            .limit(20)
+        )
+
+        return [
+            {"profile": row.profile, "voice_id": row.voice_id, "count": row.count}
+            for row in result
+            if row.profile and row.voice_id
+        ]

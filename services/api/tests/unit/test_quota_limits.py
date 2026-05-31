@@ -37,7 +37,13 @@ def test_get_plan_limits_returns_quota_limits_instance():
 # ── FREE tier specifics ───────────────────────────────────────────────────────
 
 def test_free_tier_character_limit():
-    assert get_plan_limits(PlanTier.FREE).monthly_char_limit == 10_000
+    assert get_plan_limits(PlanTier.FREE).monthly_char_limit == 30_000
+
+
+def test_free_tier_allows_small_spanish_pdf():
+    """A 16,060-char PDF that exceeded the old 10k limit must fit in the new 30k limit."""
+    lim = get_plan_limits(PlanTier.FREE)
+    assert lim.monthly_char_limit >= 16_060
 
 
 def test_free_tier_job_limit():

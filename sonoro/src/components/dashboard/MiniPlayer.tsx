@@ -8,18 +8,23 @@
  * Mounted in DashboardLayout so it persists across all dashboard pages.
  */
 import { useState, useEffect } from 'react';
-import { loadLastPlayed } from '@/hooks/usePlaybackProgress';
+import { useStore } from '@nanostores/react';
+import { $user } from '@/stores/auth';
+import { loadLastPlayed, setCurrentUserId } from '@/hooks/usePlaybackProgress';
 import type { PlaybackProgress } from '@/hooks/usePlaybackProgress';
 import BookCover from '@/components/ui/BookCover';
 import { track } from '@/lib/analytics';
 import { cn } from '@/lib/utils';
 
 export default function MiniPlayer() {
+  const user = useStore($user);
   const [progress, setProgress]   = useState<PlaybackProgress | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const [visible, setVisible]     = useState(false);
 
   useEffect(() => {
+    // Scope localStorage to current user so another account's playback never leaks in.
+    setCurrentUserId(user?.id ?? null);
     const p = loadLastPlayed();
     if (!p || p.totalDuration <= 0) return;
     if (p.currentTime < 30) return;
@@ -44,7 +49,7 @@ export default function MiniPlayer() {
         });
       });
     });
-  }, []);
+  }, [user?.id]);
 
   if (!progress || dismissed) return null;
 

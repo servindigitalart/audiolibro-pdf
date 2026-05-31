@@ -123,6 +123,13 @@ class Document(Base):
         comment="SHA256 hash for integrity verification"
     )
     
+    # Narration settings (PHASE 5H) — recorded on completion for regeneration
+    narration_style = Column(
+        String(50),
+        nullable=True,
+        comment="Narration profile used for the most recent successful generation"
+    )
+
     # Audio output (BLOCK 6C)
     final_audio_path = Column(
         String(1024),

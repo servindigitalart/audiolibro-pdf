@@ -17,6 +17,7 @@ from app.core.auth_dependencies import require_admin
 from app.db.models.user import User
 from app.db.session import get_async_db as get_db
 from app.analytics.analytics_service import AnalyticsService
+from app.analytics.dashboard_service import DashboardService
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +165,31 @@ async def get_voice_engagement(
     return {
         "period_days": days,
         "voices": voices,
+        "accessed_by": current_user.email,
+        "accessed_at": datetime.utcnow().isoformat(),
+    }
+
+
+@router.get("/narration-profiles")
+async def get_narration_profile_intelligence(
+    days: int          = Query(default=30, ge=1, le=365),
+    current_user: User = Depends(require_admin),
+    db: AsyncSession   = Depends(get_db),
+):
+    """
+    Narration profile usage and quality intelligence.
+
+    **Admin only**
+
+    Answers:
+    - Which narration profile is most selected?
+    - Which profile has the highest completion rate?
+    - Which voice/profile combinations are most popular?
+    - How does each profile perform in terms of audiobooks generated?
+    """
+    data = await DashboardService.get_profile_intelligence(db, days=days)
+    return {
+        **data,
         "accessed_by": current_user.email,
         "accessed_at": datetime.utcnow().isoformat(),
     }

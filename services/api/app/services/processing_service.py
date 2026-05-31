@@ -33,6 +33,7 @@ from app.celery_app import celery_app, revoke_task
 from app.tasks.processing import process_document_job
 from app.financial.quota.quota_service import QuotaService
 from app.financial.cost.cost_enums import ActionType
+from app.analytics.analytics_service import AnalyticsService
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +168,18 @@ class ProcessingService:
 
         await self.db.commit()
         await self.db.refresh(job)
+
+        # Analytics: record which profile the user chose at job creation time.
+        await AnalyticsService.record_event(
+            db=self.db,
+            user_id=user.id,
+            event_type="narration_profile_selected",
+            document_id=document_id,
+            properties={
+                "profile": request.narration_style or "storytelling",
+                "voice_id": request.voice_id,
+            },
+        )
 
         # Increment the monthly job counter so the quota UI stays accurate.
         # This runs after commit so a DB error here doesn't roll back the job row.

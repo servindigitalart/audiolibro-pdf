@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
-import { loadLastPlayed } from '@/hooks/usePlaybackProgress';
+import { useStore } from '@nanostores/react';
+import { $user } from '@/stores/auth';
+import { loadLastPlayed, setCurrentUserId } from '@/hooks/usePlaybackProgress';
 import type { PlaybackProgress } from '@/hooks/usePlaybackProgress';
 import BookCover from '@/components/ui/BookCover';
 
@@ -13,13 +15,15 @@ function formatRemaining(secs: number): string {
 }
 
 export default function ContinueListening() {
+  const user = useStore($user);
   const [progress, setProgress] = useState<PlaybackProgress | null>(null);
 
   useEffect(() => {
+    setCurrentUserId(user?.id ?? null);
     const p = loadLastPlayed();
     if (!p || p.totalDuration <= 0 || p.currentTime < 30) return;
     setProgress(p);
-  }, []);
+  }, [user?.id]);
 
   if (!progress) return null;
 

@@ -9,7 +9,7 @@ Pure orchestration infrastructure - no TTS business logic.
 
 import logging
 from celery import Celery
-from celery.signals import task_prerun, task_postrun, task_failure
+from celery.signals import task_prerun, task_postrun, task_failure, worker_process_init
 from kombu import Queue
 
 from app.core.config import settings
@@ -104,6 +104,25 @@ celery_app.conf.task_routes = (route_task,)
 # ============================================
 # CELERY SIGNALS
 # ============================================
+
+@worker_process_init.connect
+def worker_process_init_handler(**kwargs):
+    """
+    Called once in each worker child process after fork().
+
+    The parent process may have imported modules that hold asyncpg connection
+    pools bound to the parent's event loop.  Any such module-level state would
+    be shared (copy-on-write) into child processes and cause:
+
+        RuntimeError: Future attached to a different loop
+
+    This handler fires before any task runs, giving us a safe place to log the
+    new PID.  The actual DB engine is created fresh inside each asyncio.run()
+    call in _dispatch_job, so no pool disposal is needed here.
+    """
+    import os
+    logger.info("[SONORO] worker_process_init pid=%d", os.getpid())
+
 
 @task_prerun.connect
 def task_prerun_handler(sender=None, task_id=None, task=None, args=None, kwargs=None, **extra):

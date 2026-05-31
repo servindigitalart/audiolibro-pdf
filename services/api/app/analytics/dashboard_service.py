@@ -203,6 +203,37 @@ class DashboardService:
         }
 
     @staticmethod
+    async def get_profile_intelligence(db: AsyncSession, days: int = 30) -> dict[str, Any]:
+        """
+        Narration profile analytics for the admin intelligence dashboard.
+
+        Answers the four founder questions:
+          1. Which profile is most selected?
+          2. Which profile has the highest completion rate?
+          3. Which profile converts free users to paid? (proxy: profile at first audiobook)
+          4. Which voice/profile combos perform best?
+        """
+        from app.analytics.analytics_service import AnalyticsService
+
+        selections    = await AnalyticsService.get_profile_selection_stats(db, days=days)
+        generations   = await AnalyticsService.get_profile_generation_stats(db, days=days)
+        completions   = await AnalyticsService.get_profile_completion_rates(db)
+        combos        = await AnalyticsService.get_top_voice_profile_combinations(db, days=days)
+
+        most_selected = selections[0]["profile"] if selections else None
+        highest_completion = completions[0]["profile"] if completions else None
+
+        return {
+            "period_days":         days,
+            "most_selected":       most_selected,
+            "highest_completion":  highest_completion,
+            "by_selection":        selections,
+            "by_generation":       generations,
+            "by_completion_rate":  completions,
+            "top_voice_combos":    combos,
+        }
+
+    @staticmethod
     async def get_activity(db: AsyncSession, limit: int = 50) -> dict[str, Any]:
         rows = (await db.execute(
             select(

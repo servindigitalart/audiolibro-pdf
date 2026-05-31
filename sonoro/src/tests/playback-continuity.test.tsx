@@ -21,6 +21,7 @@ import {
   loadProgress,
   loadLastPlayed,
   clearProgress,
+  setCurrentUserId,
 } from '@/hooks/usePlaybackProgress';
 import type { PlaybackProgress } from '@/hooks/usePlaybackProgress';
 import AudioPlayer from '@/components/dashboard/AudioPlayer';
@@ -509,5 +510,105 @@ describe('ContinueListening', () => {
     await new Promise(r => setTimeout(r, 20));
     // < 30s + not completed → still hidden
     expect(container.firstChild).toBeNull();
+  });
+});
+
+// ── User-scoped localStorage — cross-account isolation ────────────────────────
+
+describe('user-scoped localStorage isolation', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setCurrentUserId(null); // start anonymous
+  });
+
+  afterEach(() => {
+    setCurrentUserId(null);
+    localStorage.clear();
+  });
+
+  it('saves progress under a user-scoped key when userId is set', () => {
+    setCurrentUserId('user-a');
+    saveProgress({
+      documentId: 'doc-1', documentTitle: 'Book', chapterIdx: 0, chapterTitle: '',
+      currentTime: 100, totalDuration: 500, timestamp: Date.now(),
+    });
+    // The raw localStorage key must include the userId
+    const keys = Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i));
+    expect(keys.some(k => k?.includes('user-a'))).toBe(true);
+  });
+
+  it('User B cannot see User A progress in same browser', () => {
+    setCurrentUserId('user-a');
+    saveProgress({
+      documentId: 'doc-1', documentTitle: 'User A Book', chapterIdx: 0, chapterTitle: '',
+      currentTime: 300, totalDuration: 1000, timestamp: Date.now(),
+    });
+
+    setCurrentUserId('user-b');
+    expect(loadProgress('doc-1')).toBeNull();
+    expect(loadLastPlayed()).toBeNull();
+  });
+
+  it('User A sees own progress after User B logs in and out', () => {
+    setCurrentUserId('user-a');
+    saveProgress({
+      documentId: 'doc-a', documentTitle: 'A Book', chapterIdx: 0, chapterTitle: '',
+      currentTime: 200, totalDuration: 1000, timestamp: Date.now(),
+    });
+
+    // User B logs in, saves their own progress
+    setCurrentUserId('user-b');
+    saveProgress({
+      documentId: 'doc-b', documentTitle: 'B Book', chapterIdx: 1, chapterTitle: 'Ch2',
+      currentTime: 400, totalDuration: 2000, timestamp: Date.now(),
+    });
+
+    // Switch back to User A — should see their own doc, not User B's
+    setCurrentUserId('user-a');
+    expect(loadProgress('doc-a')).not.toBeNull();
+    expect(loadProgress('doc-b')).toBeNull();
+    expect(loadLastPlayed()?.documentId).toBe('doc-a');
+  });
+
+  it('getAllProgress only returns entries for the current user', () => {
+    setCurrentUserId('user-a');
+    saveProgress({
+      documentId: 'doc-x', documentTitle: 'X', chapterIdx: 0, chapterTitle: '',
+      currentTime: 100, totalDuration: 500, timestamp: Date.now(),
+    });
+
+    setCurrentUserId('user-b');
+    saveProgress({
+      documentId: 'doc-y', documentTitle: 'Y', chapterIdx: 0, chapterTitle: '',
+      currentTime: 100, totalDuration: 500, timestamp: Date.now(),
+    });
+
+    // User B should only see doc-y
+    const { getAllProgress } = await import('@/hooks/usePlaybackProgress');
+    const all = getAllProgress();
+    expect(all).toHaveLength(1);
+    expect(all[0].documentId).toBe('doc-y');
+  });
+
+  it('clearProgress only affects the current user scope', () => {
+    setCurrentUserId('user-a');
+    saveProgress({
+      documentId: 'shared-doc', documentTitle: 'Shared', chapterIdx: 0, chapterTitle: '',
+      currentTime: 100, totalDuration: 500, timestamp: Date.now(),
+    });
+
+    setCurrentUserId('user-b');
+    saveProgress({
+      documentId: 'shared-doc', documentTitle: 'Shared', chapterIdx: 0, chapterTitle: '',
+      currentTime: 200, totalDuration: 500, timestamp: Date.now(),
+    });
+
+    // User B clears their entry
+    clearProgress('shared-doc');
+    expect(loadProgress('shared-doc')).toBeNull();
+
+    // User A's entry is untouched
+    setCurrentUserId('user-a');
+    expect(loadProgress('shared-doc')).not.toBeNull();
   });
 });

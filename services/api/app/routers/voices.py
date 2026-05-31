@@ -44,9 +44,24 @@ _PREVIEW_TEXTS: dict[str, str] = {
 }
 _DEFAULT_PREVIEW_TEXT = _PREVIEW_TEXTS["en"]
 
-# Global cache: "voice_id:language_code" → MP3 bytes
+# Global cache: "voice_id:language_code:style" → MP3 bytes
 _cache: dict[str, bytes] = {}
 _cache_lock = asyncio.Lock()
+
+
+def _derive_language_code(voice_id: str, fallback: str) -> str:
+    """
+    Derive the BCP-47 language code from a Google TTS voice_id.
+
+    Google voice IDs follow the pattern "{lang}-{region}-{type}-{letter}",
+    e.g. "es-US-Neural2-A" → "es-US", "en-GB-Neural2-A" → "en-GB".
+    Sending the generic ISO-639-1 code ("es") instead of the full BCP-47 code
+    ("es-US") causes Google TTS to reject the request with a 400 error.
+    """
+    parts = voice_id.split("-")
+    if len(parts) >= 2 and len(parts[0]) == 2 and len(parts[1]) == 2:
+        return f"{parts[0]}-{parts[1]}"
+    return fallback
 
 
 @router.get("/preview")
@@ -64,6 +79,9 @@ async def preview_voice(
     per voice+language+style combination for the lifetime of the server process.
     """
     style_params = get_style_params(narration_style)
+    # Always derive the full BCP-47 code from the voice_id so Google TTS never
+    # receives a mismatched pair (e.g. language_code='es' with voice 'es-US-Neural2-A').
+    language_code = _derive_language_code(voice_id, language_code)
     cache_key    = f"{voice_id}:{language_code}:{narration_style or ''}"
     lang_short   = language_code[:2].lower()
     text         = _PREVIEW_TEXTS.get(lang_short, _DEFAULT_PREVIEW_TEXT)

@@ -132,27 +132,18 @@ async def _ffmpeg_concat(input_paths: list, output_path: str) -> int:
 # ============================================
 # ASYNC DATABASE HELPER
 # ============================================
-
-# Create async engine for Celery tasks
-async_engine = create_async_engine(
-    str(settings.database_async_url),
-    pool_size=5,
-    max_overflow=10,
-    pool_pre_ping=True,
-    echo=False,
-)
-
-AsyncSessionLocal = async_sessionmaker(
-    async_engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-)
-
-
-async def get_async_session() -> AsyncSession:
-    """Get async database session for Celery tasks."""
-    async with AsyncSessionLocal() as session:
-        yield session
+# NOTE: No module-level AsyncEngine or sessionmaker here.
+#
+# Celery workers run each task inside asyncio.run(), which creates a fresh event
+# loop per task.  An AsyncEngine (and its asyncpg connection pool) is bound to
+# the event loop that created it.  Reusing a module-level engine across tasks —
+# or across fork() boundaries — causes:
+#
+#   RuntimeError: Future attached to a different loop
+#
+# Fix: create a fresh engine at the top of every _dispatch_job coroutine and
+# dispose it in a finally block before asyncio.run() returns.  The engine's
+# lifetime matches exactly one event loop → no cross-loop reuse.
 
 
 # ============================================
@@ -224,35 +215,47 @@ def process_document_job(self, job_id: str):
 
 async def _dispatch_job(job_id: UUID, task_id: str, retry_count: int) -> None:
     """
-    Single-event-loop wrapper around _process_job_async.
+    Single-event-loop entry point for all job processing.
 
-    All exception handling — including the DB write in _mark_job_failed — runs
-    inside this coroutine so they share the same asyncio event loop that
-    asyncio.run() creates.  Calling asyncio.run() a second time after the first
-    loop closes would create a new loop that cannot reuse SQLAlchemy's connection
-    pool, causing "Future attached to a different loop".
+    Creates a fresh AsyncEngine bound to *this* event loop (the one that
+    asyncio.run() just created) so asyncpg never sees connections from a
+    different loop.  The engine is disposed in the finally block, ensuring
+    every connection is closed before the event loop exits.
 
-    QuotaExhaustedError is caught and silently terminates the coroutine (returns
-    normally) so Celery does not schedule a retry — quota failures are permanent
-    until the next billing period.  The job row is marked FAILED before returning.
-
-    All other exceptions mark the job FAILED then re-raise so Celery can retry.
+    QuotaExhaustedError → job marked FAILED, returns normally (no retry).
+    All other exceptions → job marked FAILED, re-raised for Celery retry.
     """
+    engine = create_async_engine(
+        str(settings.database_async_url),
+        pool_size=5,
+        max_overflow=10,
+        pool_pre_ping=True,
+        echo=False,
+    )
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     try:
-        await _process_job_async(job_id, task_id, retry_count)
+        await _process_job_async(job_id, task_id, retry_count, session_factory)
     except _QuotaExhaustedError as e:
         logger.warning(
             "[SONORO] quota_exhausted_no_retry job_id=%s error=%s", job_id, str(e)
         )
-        await _mark_job_failed(job_id, str(e), retry_count)
+        await _mark_job_failed(job_id, str(e), retry_count, session_factory)
         # Return normally — quota failure is permanent, no Celery retry.
     except Exception as e:
         logger.error("[SONORO] job_error job_id=%s error=%s", job_id, str(e), exc_info=True)
-        await _mark_job_failed(job_id, str(e), retry_count)
+        await _mark_job_failed(job_id, str(e), retry_count, session_factory)
         raise
+    finally:
+        await engine.dispose()
+        logger.debug("[SONORO] worker_engine_disposed job_id=%s", job_id)
 
 
-async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
+async def _process_job_async(
+    job_id: UUID,
+    task_id: str,
+    retry_count: int,
+    session_factory: async_sessionmaker,
+):
     """
     Main async processing logic.
 
@@ -280,8 +283,10 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
     )
     from app.pricing.unit_economics import UnitEconomicsEngine, CHARS_PER_LISTENING_HOUR
     from app.pricing.tiers import PlanTier
+    from app.tts.narration_profiles import get_profile_or_default, prepare_text_for_profile
+    from app.analytics.analytics_service import AnalyticsService
 
-    async with AsyncSessionLocal() as session:
+    async with session_factory() as session:
         try:
             # Fetch job
             result = await session.execute(
@@ -420,24 +425,28 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
             tts_voice_id = lang_result.voice_id
             tts_language_code = lang_result.language_code
 
-            # Honour explicit voice selection made in the preflight UI
+            # Honour explicit voice selection made in the preflight UI.
+            # Also re-derive the language code from the override voice_id so that
+            # Google TTS always receives a matching BCP-47 pair (e.g. es-US, not es).
             if job.voice_id_override:
                 tts_voice_id = job.voice_id_override
+                parts = tts_voice_id.split("-")
+                if len(parts) >= 2 and len(parts[0]) == 2 and len(parts[1]) == 2:
+                    tts_language_code = f"{parts[0]}-{parts[1]}"
                 logger.info(
-                    "[SONORO] voice_override_applied job_id=%s voice=%s",
-                    job_id, tts_voice_id,
+                    "[SONORO] voice_override_applied job_id=%s voice=%s language_code=%s",
+                    job_id, tts_voice_id, tts_language_code,
                 )
 
-            # Resolve narration style → speaking_rate / pitch
-            from app.services.tts.narration_style import get_style_params as _get_style
-            _style_params = _get_style(job.narration_style)
+            # Resolve narration style → full NarrationProfile
+            _profile = get_profile_or_default(job.narration_style)
             logger.info(
-                "[SONORO] narration_style_resolved job_id=%s style=%s "
+                "[SONORO] narration_profile_resolved job_id=%s profile=%s "
                 "speaking_rate=%s pitch=%s voice_id=%s",
                 job_id,
-                job.narration_style or "default",
-                _style_params.speaking_rate,
-                _style_params.pitch,
+                _profile.name,
+                _profile.speaking_rate,
+                _profile.pitch,
                 tts_voice_id,
             )
 
@@ -479,10 +488,11 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
             if chapters_to_process:
                 prepared = []
                 for i, chapter in enumerate(chapters_to_process):
-                    chapter_text = chapter.text_content if chapter.text_content else (
+                    raw_text = chapter.text_content if chapter.text_content else (
                         f"Chapter {i + 1}: {chapter.title}. "
                         f"This chapter spans pages {chapter.start_page} to {chapter.end_page}."
                     )
+                    chapter_text = prepare_text_for_profile(raw_text, _profile)
                     prepared.append((chapter, chapter_text, _chunk_text(chapter_text)))
                 total_chunks = sum(len(c) for _, _, c in prepared)
             else:
@@ -527,8 +537,8 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
                             text=chunk,
                             voice_id=tts_voice_id,
                             language_code=tts_language_code,
-                            speaking_rate=_style_params.speaking_rate,
-                            pitch=_style_params.pitch,
+                            speaking_rate=_profile.speaking_rate,
+                            pitch=_profile.pitch,
                         )
                         _chars_synthesized += len(chunk)
                         p = str(tmp / f"ch1_chunk{j + 1}.mp3")
@@ -582,6 +592,8 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
                                 text=chunk,
                                 voice_id=tts_voice_id,
                                 language_code=tts_language_code,
+                                speaking_rate=_profile.speaking_rate,
+                                pitch=_profile.pitch,
                             )
                             _chars_synthesized += len(chunk)
                             p = str(tmp / f"ch{i + 1}_chunk{j + 1}.mp3")
@@ -785,15 +797,35 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
 
             document.processing_status = ProcessingStatus.COMPLETED
             document.processing_completed_at = datetime.utcnow()
+            # Record the narration style used so the document can be regenerated
+            # with the same profile in the future.
+            document.narration_style = _profile.name
 
             await session.commit()
 
+            # Analytics: audiobook generated with profile + voice
+            await AnalyticsService.record_event(
+                db=session,
+                user_id=document.user_id,
+                event_type="audiobook_generated",
+                document_id=document.id,
+                properties={
+                    "profile": _profile.name,
+                    "voice_id": tts_voice_id,
+                    "chars_synthesized": _chars_synthesized,
+                    "chapters": structure.chapter_count if structure else 1,
+                    "duration_s": duration_s,
+                    "plan_tier": _plan_tier_str,
+                },
+            )
+
             logger.info(
-                "[SONORO] job_completed job_id=%s audio_path=%s duration_s=%.1f chapters=%d",
+                "[SONORO] job_completed job_id=%s audio_path=%s duration_s=%.1f chapters=%d profile=%s",
                 job_id,
                 document.final_audio_path,
                 (job.completed_at - job.started_at).total_seconds(),
                 structure.chapter_count if structure else 1,
+                _profile.name,
             )
             
         except Exception as e:
@@ -801,10 +833,15 @@ async def _process_job_async(job_id: UUID, task_id: str, retry_count: int):
             raise
 
 
-async def _mark_job_failed(job_id: UUID, error_message: str, retry_count: int):
-    """Mark job as failed in database."""
-    
-    async with AsyncSessionLocal() as session:
+async def _mark_job_failed(
+    job_id: UUID,
+    error_message: str,
+    retry_count: int,
+    session_factory: async_sessionmaker,
+):
+    """Mark job as failed in database using the caller's session factory."""
+
+    async with session_factory() as session:
         try:
             result = await session.execute(
                 select(ProcessingJob).where(ProcessingJob.id == job_id)
@@ -813,27 +850,36 @@ async def _mark_job_failed(job_id: UUID, error_message: str, retry_count: int):
             
             if job:
                 job.status = JobStatus.FAILED
-                job.error_message = error_message
+                # Store up to 2000 chars so the error is readable in admin/logs
+                # without truncating important stack context.
+                job.error_message = error_message[:2000]
                 job.retry_count = retry_count
                 job.completed_at = datetime.utcnow()
-                
+
                 # Update document status
                 doc_result = await session.execute(
                     select(Document).where(Document.id == job.document_id)
                 )
                 document = doc_result.scalar_one_or_none()
-                
+
                 if document:
                     document.processing_status = ProcessingStatus.FAILED
-                
+
                 await session.commit()
-                
+
                 logger.error(
-                    "[SONORO] job_failed job_id=%s retry_count=%d error=%s",
-                    job_id, retry_count, error_message,
+                    "[SONORO] job_failed job_id=%s retry_count=%d "
+                    "document_id=%s error=%s",
+                    job_id,
+                    retry_count,
+                    job.document_id,
+                    error_message,
                 )
         except Exception as e:
-            logger.error(f"Failed to mark job as failed: {str(e)}")
+            logger.error(
+                "[SONORO] mark_job_failed_db_error job_id=%s error=%s",
+                job_id, str(e), exc_info=True,
+            )
             await session.rollback()
 
 

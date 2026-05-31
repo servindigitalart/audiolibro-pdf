@@ -31,6 +31,7 @@ from app.services.document_structure.exceptions import (
     PDFExtractionError,
     NoChaptersDetectedError,
 )
+from app.text.normalizer import normalize_with_stats
 
 logger = logging.getLogger(__name__)
 
@@ -223,8 +224,24 @@ class DocumentStructureEngine:
                         page = doc[page_num]
                         text += page.get_text()
                 
-                chapter.text_content = text.strip()
+                raw_text = text.strip()
+                normalized, norm_stats = normalize_with_stats(raw_text)
+                chapter.text_content = normalized
                 chapter.char_count = len(chapter.text_content)
+
+                logger.info(
+                    "[SONORO] chapter_normalized chapter=%s "
+                    "raw_chars=%d normalized_chars=%d "
+                    "line_repairs=%d hyphen_repairs=%d "
+                    "headers_removed=%d ocr_removed=%d",
+                    chapter.title,
+                    norm_stats.input_chars,
+                    norm_stats.output_chars,
+                    norm_stats.line_break_repairs,
+                    norm_stats.hyphen_repairs,
+                    norm_stats.headers_removed,
+                    norm_stats.ocr_artifacts_removed,
+                )
                 
                 # Generate preview (first 500 chars)
                 if chapter.text_content:

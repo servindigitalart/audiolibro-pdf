@@ -5,6 +5,14 @@ const LAST_PLAYED  = 'sonoro_last_played';
 const SAVE_INTERVAL_MS = 5_000;
 const COMPLETED_THRESHOLD = 0.98;
 
+// Current authenticated user ID — set by auth-aware components on login/logout.
+// When set, all keys are namespaced to prevent cross-account state leakage.
+let _currentUserId: string | null = null;
+
+export function setCurrentUserId(id: string | null): void {
+  _currentUserId = id;
+}
+
 export interface PlaybackProgress {
   documentId:    string;
   documentTitle: string;
@@ -19,6 +27,30 @@ export interface PlaybackProgress {
   completed?:     boolean;
 }
 
+// ── Key helpers ───────────────────────────────────────────────────────────────
+// When a userId is active, keys are namespaced: "sonoro_progress_{userId}*{docId}"
+// When no userId (anonymous / legacy), fall back to unscoped keys for backward compat.
+
+function _progressKey(documentId: string): string {
+  return _currentUserId
+    ? `${KEY_PREFIX}${_currentUserId}*${documentId}`
+    : `${KEY_PREFIX}${documentId}`;
+}
+
+function _lastPlayedKey(): string {
+  return _currentUserId
+    ? `${LAST_PLAYED}*${_currentUserId}`
+    : LAST_PLAYED;
+}
+
+function _userKeyPrefix(): string {
+  return _currentUserId
+    ? `${KEY_PREFIX}${_currentUserId}*`
+    : KEY_PREFIX;
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
 export function saveProgress(p: PlaybackProgress): void {
   try {
     const progressPct = p.totalDuration > 0
@@ -26,14 +58,14 @@ export function saveProgress(p: PlaybackProgress): void {
       : (p.progressPct ?? 0);
     const completed = p.completed ?? progressPct / 100 >= COMPLETED_THRESHOLD;
     const enriched: PlaybackProgress = { ...p, progressPct, completed };
-    localStorage.setItem(KEY_PREFIX + p.documentId, JSON.stringify(enriched));
-    localStorage.setItem(LAST_PLAYED, p.documentId);
+    localStorage.setItem(_progressKey(p.documentId), JSON.stringify(enriched));
+    localStorage.setItem(_lastPlayedKey(), p.documentId);
   } catch { /* storage unavailable */ }
 }
 
 export function loadProgress(documentId: string): PlaybackProgress | null {
   try {
-    const raw = localStorage.getItem(KEY_PREFIX + documentId);
+    const raw = localStorage.getItem(_progressKey(documentId));
     return raw ? (JSON.parse(raw) as PlaybackProgress) : null;
   } catch {
     return null;
@@ -42,7 +74,7 @@ export function loadProgress(documentId: string): PlaybackProgress | null {
 
 export function loadLastPlayed(): PlaybackProgress | null {
   try {
-    const id = localStorage.getItem(LAST_PLAYED);
+    const id = localStorage.getItem(_lastPlayedKey());
     return id ? loadProgress(id) : null;
   } catch {
     return null;
@@ -51,10 +83,11 @@ export function loadLastPlayed(): PlaybackProgress | null {
 
 export function getAllProgress(): PlaybackProgress[] {
   const results: PlaybackProgress[] = [];
+  const prefix = _userKeyPrefix();
   try {
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (key?.startsWith(KEY_PREFIX)) {
+      if (key?.startsWith(prefix)) {
         const raw = localStorage.getItem(key);
         if (raw) {
           try { results.push(JSON.parse(raw) as PlaybackProgress); } catch { /* skip */ }
@@ -68,9 +101,9 @@ export function getAllProgress(): PlaybackProgress[] {
 
 export function clearProgress(documentId: string): void {
   try {
-    localStorage.removeItem(KEY_PREFIX + documentId);
-    if (localStorage.getItem(LAST_PLAYED) === documentId) {
-      localStorage.removeItem(LAST_PLAYED);
+    localStorage.removeItem(_progressKey(documentId));
+    if (localStorage.getItem(_lastPlayedKey()) === documentId) {
+      localStorage.removeItem(_lastPlayedKey());
     }
   } catch { /* ignore */ }
 }
