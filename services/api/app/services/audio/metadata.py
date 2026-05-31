@@ -168,10 +168,11 @@ class AudioMetadataWriter:
             # Load MP3 file
             audio = MP3(audio_path)
             
-            # Add ID3 tags if not present
-            try:
-                audio.tags
-            except ID3NoHeaderError:
+            # Initialize ID3 tag container if the file has none.
+            # MP3() sets audio.tags = None for tag-free files rather than
+            # raising ID3NoHeaderError, so a try/except on the attribute
+            # access never fires and is the wrong guard here.
+            if audio.tags is None:
                 audio.add_tags()
             
             tags_written = {}
