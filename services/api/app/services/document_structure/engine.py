@@ -13,6 +13,7 @@ from typing import List, Optional
 from uuid import UUID
 
 import fitz  # PyMuPDF
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.chapter import Chapter
@@ -265,7 +266,16 @@ class DocumentStructureEngine:
         chapters: List[DetectedChapter],
         db: AsyncSession
     ):
-        """Persist chapters to database."""
+        """Persist chapters to database.
+
+        Idempotent: deletes any existing chapters for this document before
+        inserting so that Celery retries never accumulate duplicate rows.
+        The DELETE and INSERTs share the same transaction and are committed
+        together, so there is no window where the document has zero chapters.
+        """
+        # Remove stale rows from a previous (possibly partial) run.
+        await db.execute(delete(Chapter).where(Chapter.document_id == document_id))
+
         for i, chapter in enumerate(chapters):
             db_chapter = Chapter(
                 document_id=document_id,
@@ -279,7 +289,7 @@ class DocumentStructureEngine:
                 text_preview=getattr(chapter, 'text_preview', None)
             )
             db.add(db_chapter)
-        
+
         await db.commit()
         logger.info(f"Persisted {len(chapters)} chapters for document {document_id}")
     

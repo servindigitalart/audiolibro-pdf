@@ -25,6 +25,7 @@ from sqlalchemy import (
     DateTime,
     Index,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -146,8 +147,14 @@ class Chapter(Base):
         lazy="joined"
     )
 
-    # Indexes
+    # Indexes and constraints
     __table_args__ = (
+        # Enforce one row per (document, position) — prevents duplicates on retry.
+        UniqueConstraint(
+            "document_id",
+            "order_index",
+            name="uq_chapters_document_order",
+        ),
         # Query chapters by document in order
         Index(
             "ix_chapters_document_order",
