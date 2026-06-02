@@ -168,6 +168,12 @@ class Settings(BaseSettings):
         default="en-US", description="Default language code"
     )
 
+    # Book Intelligence — Metadata Providers
+    google_books_api_key: str = Field(
+        default="",
+        description="Google Books API key (optional — anonymous quota: 1000 req/day; with key: higher limits)",
+    )
+
     # Stripe Billing (BLOCK 7)
     stripe_mode: str = Field(
         default="mock",

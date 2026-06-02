@@ -117,6 +117,27 @@ class LocalStorageService:
     async def get_document_metadata(self, storage_path: str) -> Optional[dict]:
         return {}
 
+    async def upload_image(
+        self,
+        image_data: bytes,
+        user_id: UUID,
+        document_id: UUID,
+        ext: str = "jpg",
+    ) -> str:
+        storage_path = f"covers/{user_id}/{document_id}.{ext}"
+        full = self._full(storage_path)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "wb") as fh:
+            fh.write(image_data)
+        return storage_path
+
+    async def generate_image_url(
+        self,
+        storage_path: str,
+        expiry_seconds: Optional[int] = None,
+    ) -> str:
+        return f"/api/v1/storage/local/{storage_path}"
+
     async def upload_audio(
         self,
         audio_data: bytes,
@@ -422,6 +443,53 @@ class S3StorageService:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to upload audio to storage",
+            ) from exc
+
+    async def upload_image(
+        self,
+        image_data: bytes,
+        user_id: UUID,
+        document_id: UUID,
+        ext: str = "jpg",
+    ) -> str:
+        from botocore.exceptions import ClientError
+
+        storage_path = f"covers/{user_id}/{document_id}.{ext}"
+        try:
+            content_type = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}.get(ext, "image/jpeg")
+            self.client.put_object(
+                Bucket=self.bucket,
+                Key=storage_path,
+                Body=image_data,
+                ContentType=content_type,
+            )
+            return storage_path
+        except ClientError as exc:
+            logger.error("S3 image upload failed: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to upload cover image",
+            ) from exc
+
+    async def generate_image_url(
+        self,
+        storage_path: str,
+        expiry_seconds: Optional[int] = None,
+    ) -> str:
+        from botocore.exceptions import ClientError
+
+        expiry = expiry_seconds or self.PRESIGNED_URL_EXPIRY
+        try:
+            return self.client.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": self.bucket, "Key": storage_path},
+                ExpiresIn=expiry,
+            )
+        except ClientError as exc:
+            logger.error("Failed to generate image presigned URL: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to generate image URL",
             ) from exc
 
     async def upload_audio_file(

@@ -56,13 +56,13 @@ export default function ContinueListening() {
 
           {isComplete ? (
             <p className="text-xs text-emerald-600 font-medium mb-2">Finished</p>
-          ) : progress.chapterTitle ? (
+          ) : progress.chapterTitle && progress.chapterTitle !== 'Full Document' ? (
             <p className="text-xs text-sonoro-amber-dark font-medium truncate mb-2">
               {progress.chapterTitle}
             </p>
           ) : (
             <p className="text-xs text-sonoro-muted mb-2">
-              Chapter {progress.chapterIdx + 1}
+              Part {progress.chapterIdx + 1}
             </p>
           )}
 

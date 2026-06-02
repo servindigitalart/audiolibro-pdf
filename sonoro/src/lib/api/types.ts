@@ -23,13 +23,27 @@ export interface Document {
   title: string;
   /** The raw user-set display title (undefined if never renamed) */
   display_title?: string;
+  /** Detected or user-provided author name */
+  author?: string;
+  /** Book subtitle from metadata provider */
+  subtitle?: string;
+  /** ISBN-13 or ISBN-10 */
+  isbn?: string;
+  /** Which system produced the metadata: local | google_books | open_library | manual */
+  metadata_source?: string;
+  /** Confidence score 0.0–1.0 */
+  metadata_confidence?: number;
   filename: string;
   file_size: number;
   status: 'pending' | 'processing' | 'completed' | 'failed';
   upload_date: string;
+  /** ISO timestamp of last status change — used to detect stuck jobs */
+  updated_at?: string;
   completed_date?: string;
   error_message?: string;
   audiobook_url?: string;
+  /** Presigned URL for user-uploaded custom cover art */
+  cover_url?: string;
   metadata?: {
     pages?: number;
     chapters?: number;

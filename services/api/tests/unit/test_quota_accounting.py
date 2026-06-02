@@ -227,12 +227,13 @@ class TestCheckCharacterQuotaForWorker:
 
     @pytest.mark.asyncio
     async def test_over_quota_raises_quota_exhausted_error_not_http(self):
-        quota = _make_quota(characters_used=9_999)
+        # Use FREE_LIMIT - 1 used, then request 2 → exceeds by 1
+        quota = _make_quota(characters_used=FREE_LIMIT - 1)
         db = _mock_db(user=_make_user("FREE"), quota=quota)
 
         with pytest.raises(QuotaExhaustedError) as exc_info:
             await QuotaService.check_character_quota_for_worker(
-                db, uuid4(), requested_chars=5_000
+                db, uuid4(), requested_chars=2
             )
 
         # Must NOT be an HTTPException — Celery must not treat this as HTTP
@@ -243,22 +244,23 @@ class TestCheckCharacterQuotaForWorker:
     @pytest.mark.asyncio
     async def test_exactly_at_limit_passes(self):
         """Used + requested == limit is exactly OK (not exceeded)."""
-        quota = _make_quota(characters_used=5_000)
+        half = FREE_LIMIT // 2
+        quota = _make_quota(characters_used=half)
         db = _mock_db(user=_make_user("FREE"), quota=quota)
 
-        # 5_000 used + 5_000 requested = 10_000 == FREE_LIMIT → allowed
+        # half used + half requested = FREE_LIMIT → allowed (not strictly over)
         await QuotaService.check_character_quota_for_worker(
-            db, uuid4(), requested_chars=5_000
+            db, uuid4(), requested_chars=half
         )
 
     @pytest.mark.asyncio
     async def test_one_over_limit_raises(self):
-        quota = _make_quota(characters_used=5_000)
+        quota = _make_quota(characters_used=FREE_LIMIT - 1)
         db = _mock_db(user=_make_user("FREE"), quota=quota)
 
         with pytest.raises(QuotaExhaustedError):
             await QuotaService.check_character_quota_for_worker(
-                db, uuid4(), requested_chars=5_001
+                db, uuid4(), requested_chars=2
             )
 
 
@@ -432,8 +434,8 @@ class TestDispatchJobWorkerPath:
 # ---------------------------------------------------------------------------
 
 
-def test_free_plan_char_limit_is_10k():
-    assert PLAN_QUOTAS[PlanTier.FREE].monthly_char_limit == 10_000
+def test_free_plan_char_limit_is_50k():
+    assert PLAN_QUOTAS[PlanTier.FREE].monthly_char_limit == 50_000
 
 
 def test_plan_limits_increase_across_tiers():

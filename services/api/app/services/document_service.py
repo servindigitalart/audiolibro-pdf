@@ -274,6 +274,13 @@ class DocumentService:
             # Step 3: Extract metadata
             metadata = await self._extract_metadata(file)
 
+            # Capture PDF bytes for book-intelligence enrichment (first 2 MB —
+            # more than enough for embedded metadata + first-page text).
+            # Reset pointer before and after so storage upload still works.
+            file.file.seek(0)
+            _pdf_sample = file.file.read(2 * 1024 * 1024)
+            file.file.seek(0)
+
             # Step 4: Create database record (PENDING status)
             storage_path = f"documents/{user.id}/{document_id}.pdf"
             
@@ -318,7 +325,30 @@ class DocumentService:
                 document.uploaded_at = datetime.utcnow()
                 await self.db.commit()
                 await self.db.refresh(document)
-                
+
+                # Step 7: Book Intelligence — fire metadata enrichment in the background.
+                # Non-blocking: the upload response returns immediately; enrichment
+                # writes author/title/cover to the document row in the background.
+                # This runs concurrently with the next await (preflight or redirect).
+                try:
+                    import asyncio as _asyncio
+                    from app.metadata.service import MetadataService as _MetaSvc
+                    from app.core.config import settings as _settings
+
+                    _asyncio.create_task(
+                        _MetaSvc.enrich(
+                            document_id=document.id,
+                            user_id=user.id,
+                            filename=original_filename,
+                            pdf_bytes=_pdf_sample,
+                            detected_language=metadata.language_detected,
+                            db=self.db,
+                            api_key=getattr(_settings, "google_books_api_key", ""),
+                        )
+                    )
+                except Exception as _meta_err:
+                    logger.debug("[SONORO] metadata_task_schedule_failed error=%s", _meta_err)
+
                 logger.info(
                     f"Document uploaded successfully",
                     extra={
@@ -328,7 +358,7 @@ class DocumentService:
                         'page_count': metadata.page_count
                     }
                 )
-                
+
                 return DocumentUploadResponse(
                     id=document.id,
                     user_id=document.user_id,
@@ -429,6 +459,17 @@ class DocumentService:
             # v is either an enum member (has .value) or a raw string from the DB
             return v.value if hasattr(v, "value") else str(v)
 
+        # Resolve cover URLs in one pass before building items
+        storage_service = get_storage_service()
+        cover_urls: dict = {}
+        for doc in documents:
+            key = getattr(doc, "cover_object_key", None)
+            if key:
+                try:
+                    cover_urls[str(doc.id)] = await storage_service.generate_image_url(key, expiry_seconds=3600)
+                except Exception:
+                    pass
+
         # Build response
         items = [
             DocumentListItem(
@@ -436,6 +477,7 @@ class DocumentService:
                 filename=doc.filename,
                 original_filename=doc.original_filename,
                 display_title=getattr(doc, "display_title", None),
+                author=getattr(doc, "author", None),
                 file_size_bytes=doc.file_size_bytes,
                 file_size_mb=doc.file_size_mb,
                 mime_type=doc.mime_type,
@@ -443,6 +485,7 @@ class DocumentService:
                 processing_status=_status_str(doc.processing_status),
                 page_count=doc.page_count,
                 language_detected=doc.language_detected,
+                cover_url=cover_urls.get(str(doc.id)),
                 created_at=doc.created_at,
                 updated_at=doc.updated_at,
             )
@@ -510,12 +553,25 @@ class DocumentService:
                     document.id, e,
                 )
 
+        cover_url = None
+        cover_key = getattr(document, "cover_object_key", None)
+        if cover_key:
+            try:
+                cover_url = await self.storage.generate_image_url(cover_key, expiry_seconds=3600)
+            except Exception as e:
+                logger.warning("[SONORO] cover_url_failed document_id=%s error=%s", document.id, e)
+
         return DocumentDetail(
             id=document.id,
             user_id=document.user_id,
             filename=document.filename,
             original_filename=document.original_filename,
             display_title=getattr(document, "display_title", None),
+            author=getattr(document, "author", None),
+            subtitle=getattr(document, "subtitle", None),
+            isbn=getattr(document, "isbn", None),
+            metadata_source=getattr(document, "metadata_source", None),
+            metadata_confidence=getattr(document, "metadata_confidence", None),
             file_size_bytes=document.file_size_bytes,
             file_size_mb=document.file_size_mb,
             mime_type=document.mime_type,
@@ -535,6 +591,7 @@ class DocumentService:
             is_ready_for_processing=document.is_ready_for_processing,
             is_processing_complete=document.is_processing_complete,
             has_failed=document.has_failed,
+            cover_url=cover_url,
             audio_url=audio_url,
             audio_duration_seconds=document.audio_duration_seconds,
             audio_file_size_bytes=document.audio_file_size_bytes,

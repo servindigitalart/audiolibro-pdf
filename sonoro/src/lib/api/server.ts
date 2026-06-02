@@ -63,15 +63,22 @@ function normalizeDocument(raw: RawDocument): Document {
     id:           String(raw.id ?? ''),
     title:        String(raw.display_title ?? raw.original_filename ?? raw.filename ?? 'Untitled'),
     display_title: raw.display_title ? String(raw.display_title) : undefined,
+    author:       raw.author ? String(raw.author) : undefined,
+    subtitle:     raw.subtitle ? String(raw.subtitle) : undefined,
+    isbn:         raw.isbn ? String(raw.isbn) : undefined,
+    metadata_source:     raw.metadata_source ? String(raw.metadata_source) : undefined,
+    metadata_confidence: raw.metadata_confidence != null ? Number(raw.metadata_confidence) : undefined,
     filename:     String(raw.filename ?? ''),
     file_size:    Number(raw.file_size_bytes ?? raw.file_size ?? 0),
     status:       deriveStatus(processingStatus, uploadStatus),
     upload_date:  String(raw.created_at ?? new Date().toISOString()),
+    updated_at:   raw.updated_at ? String(raw.updated_at) : undefined,
     completed_date: raw.processing_completed_at
       ? String(raw.processing_completed_at)
       : undefined,
     error_message: raw.error_message ? String(raw.error_message) : undefined,
     audiobook_url: raw.audio_url ? String(raw.audio_url) : undefined,
+    cover_url:    raw.cover_url ? String(raw.cover_url) : undefined,
     metadata,
   };
 }

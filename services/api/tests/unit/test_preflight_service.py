@@ -193,8 +193,8 @@ class TestPreflightAnalyzeQuota:
     @pytest.mark.asyncio
     async def test_quota_exceeded_when_over_limit(self):
         user = _make_user("FREE")
-        doc = _make_document(chars=8_000)      # 8k chars
-        quota = _make_quota(chars_used=5_000)  # 5k already used → 10k limit exceeded
+        doc = _make_document(chars=40_000)      # 40k chars
+        quota = _make_quota(chars_used=20_000)  # 20k already used → 60k total > 50k FREE limit
         db = _mock_db(quota)
 
         result = await PreflightService.analyze(doc, user, db)

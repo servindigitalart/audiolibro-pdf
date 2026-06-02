@@ -28,11 +28,21 @@ export type AnalyticsEventType =
   | 'continue_listening_opened'
   | 'player_opened'
   | 'audiobook_downloaded'
+  | 'audiobook_renamed'
+  | 'cover_uploaded'
+  | 'cover_reset'
+  | 'stuck_job_retried'
+  | 'stuck_job_cancelled'
+  | 'metadata_detected'
+  | 'metadata_accepted'
+  | 'metadata_edited'
+  | 'metadata_rejected'
+  | 'cover_found'
+  | 'cover_missing'
   | 'processing_started'
   | 'processing_completed'
   | 'processing_stage_changed'
-  | 'mini_player_opened'
-  | 'playback_resumed';
+  | 'mini_player_opened';
 
 export type SessionSource = 'direct' | 'continue_listening' | 'autoplay';
 

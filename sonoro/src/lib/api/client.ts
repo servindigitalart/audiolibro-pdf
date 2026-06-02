@@ -234,6 +234,37 @@ export async function renameDocumentTitle(documentId: string, displayTitle: stri
   return data as { id: string; display_title: string };
 }
 
+export async function cancelDocument(documentId: string) {
+  const { data } = await api.post(`/documents/${documentId}/cancel`);
+  return data as { status: string; document_id: string };
+}
+
+export async function uploadCover(documentId: string, file: File): Promise<{ cover_url: string }> {
+  const fd = new FormData();
+  fd.append('file', file);
+  const { data } = await api.post(`/documents/${documentId}/cover`, fd, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return data as { cover_url: string };
+}
+
+export async function resetCover(documentId: string): Promise<void> {
+  await api.delete(`/documents/${documentId}/cover`);
+}
+
+export async function patchBookMetadata(
+  documentId: string,
+  fields: { display_title?: string; author?: string; subtitle?: string; isbn?: string },
+) {
+  const { data } = await api.patch(`/documents/${documentId}/metadata`, fields);
+  return data as { id: string; display_title?: string; author?: string; subtitle?: string; isbn?: string };
+}
+
+export function audioDownloadUrl(documentId: string): string {
+  const BASE = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:8000/api/v1';
+  return `${BASE}/documents/${documentId}/audio`;
+}
+
 export async function getChapters(documentId: string) {
   const { data } = await api.get(`/documents/${documentId}/chapters`);
   return data;

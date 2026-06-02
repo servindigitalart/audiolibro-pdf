@@ -477,10 +477,97 @@ async def delete_document(
 
 
 # ============================================
-# TITLE RENAME ENDPOINT
+# BOOK METADATA PATCH ENDPOINT
 # ============================================
 
 from pydantic import BaseModel as _PydanticBase
+from typing import Optional as _Opt
+
+
+class BookMetadataRequest(_PydanticBase):
+    """Manual metadata override — any field may be omitted."""
+    display_title: _Opt[str] = None
+    author: _Opt[str] = None
+    subtitle: _Opt[str] = None
+    isbn: _Opt[str] = None
+
+
+@router.patch(
+    "/{document_id}/metadata",
+    summary="Update Book Metadata",
+    description=(
+        "Apply manual corrections to title, author, subtitle, or ISBN. "
+        "Marks metadata_source as 'manual' so future enrichment does not overwrite."
+    ),
+)
+async def patch_book_metadata(
+    document_id: UUID,
+    body: BookMetadataRequest,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    from app.db.models.document import Document as _DocModel
+    from app.metadata.models import MetadataSource as _MS
+    from app.analytics.analytics_service import AnalyticsService as _AS
+
+    doc_result = await db.execute(
+        select(_DocModel).where(
+            _DocModel.id == document_id,
+            _DocModel.user_id == current_user.id,
+        )
+    )
+    doc = doc_result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    changed: list[str] = []
+    if body.display_title is not None:
+        t = body.display_title.strip()
+        if not t:
+            raise HTTPException(status_code=422, detail="Title cannot be empty")
+        doc.display_title = t
+        changed.append("title")
+    if body.author is not None:
+        doc.author = body.author.strip() or None
+        changed.append("author")
+    if body.subtitle is not None:
+        doc.subtitle = body.subtitle.strip() or None
+        changed.append("subtitle")
+    if body.isbn is not None:
+        doc.isbn = body.isbn.strip() or None
+        changed.append("isbn")
+
+    if changed:
+        doc.metadata_source = _MS.MANUAL.value
+        await db.commit()
+        logger.info(
+            "[SONORO] book_metadata_patched document_id=%s user_id=%s changed=%s",
+            document_id, current_user.id, changed,
+        )
+        try:
+            await _AS.record_event(
+                db=db,
+                user_id=current_user.id,
+                event_type="metadata_edited",
+                document_id=document_id,
+                properties={"fields": changed},
+            )
+        except Exception:
+            pass
+
+    return {
+        "id":           str(document_id),
+        "display_title": doc.display_title,
+        "author":        doc.author,
+        "subtitle":      doc.subtitle,
+        "isbn":          doc.isbn,
+        "metadata_source": doc.metadata_source,
+    }
+
+
+# ============================================
+# TITLE RENAME ENDPOINT
+# ============================================
 
 class DocumentTitleRequest(_PydanticBase):
     display_title: str
@@ -628,6 +715,235 @@ async def retry_document_processing(
         document_id, job.id,
     )
     return {"job_id": str(job.id), "status": "queued"}
+
+
+# ============================================
+# CANCEL ENDPOINT
+# ============================================
+
+@router.post(
+    "/{document_id}/cancel",
+    summary="Cancel Processing",
+    description="Cancel the active processing job for a document and reset its status.",
+)
+async def cancel_document_processing(
+    document_id: UUID,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    from app.db.models.document import Document as _DocModel
+    from app.db.models.processing_job import ProcessingJob as _JobModel, JobStatus as _JS
+    from app.celery_app import revoke_task
+    from datetime import datetime as _dt
+
+    doc_result = await db.execute(
+        select(_DocModel).where(
+            _DocModel.id == document_id,
+            _DocModel.user_id == current_user.id,
+        )
+    )
+    doc = doc_result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    # Find the active job (QUEUED or PROCESSING)
+    job_result = await db.execute(
+        select(_JobModel).where(
+            _JobModel.document_id == document_id,
+            _JobModel.status.in_([_JS.QUEUED, _JS.PROCESSING]),
+        ).order_by(_JobModel.created_at.desc()).limit(1)
+    )
+    job = job_result.scalar_one_or_none()
+
+    if job:
+        if job.celery_task_id:
+            try:
+                revoke_task(job.celery_task_id, terminate=True)
+            except Exception:
+                pass
+        job.status = _JS.CANCELLED
+        job.cancelled_at = _dt.utcnow()
+
+    doc.processing_status = ProcessingStatus.NOT_STARTED
+    await db.commit()
+    logger.info("[SONORO] cancel_requested document_id=%s user_id=%s", document_id, current_user.id)
+    return {"status": "cancelled", "document_id": str(document_id)}
+
+
+# ============================================
+# COVER UPLOAD / RESET ENDPOINTS
+# ============================================
+
+_ALLOWED_COVER_MIME = {"image/jpeg", "image/png", "image/webp"}
+_COVER_EXT_MAP = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+_MAX_COVER_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
+@router.post(
+    "/{document_id}/cover",
+    summary="Upload Custom Cover",
+    description="Upload a custom cover image for this audiobook (jpeg/png/webp, max 5 MB).",
+)
+async def upload_document_cover(
+    document_id: UUID,
+    file: UploadFile = File(..., description="Cover image (jpeg/png/webp, max 5 MB)"),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    from app.db.models.document import Document as _DocModel
+
+    doc_result = await db.execute(
+        select(_DocModel).where(
+            _DocModel.id == document_id,
+            _DocModel.user_id == current_user.id,
+        )
+    )
+    doc = doc_result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    mime = (file.content_type or "").split(";")[0].strip().lower()
+    if mime not in _ALLOWED_COVER_MIME:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unsupported image type '{mime}'. Use jpeg, png, or webp.",
+        )
+
+    image_data = await file.read()
+    if len(image_data) > _MAX_COVER_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Cover image must be under 5 MB.",
+        )
+
+    ext = _COVER_EXT_MAP.get(mime, "jpg")
+    storage_service = get_storage_service()
+    storage_path = await storage_service.upload_image(
+        image_data=image_data,
+        user_id=current_user.id,
+        document_id=document_id,
+        ext=ext,
+    )
+
+    doc.cover_object_key = storage_path
+    await db.commit()
+
+    cover_url = await storage_service.generate_image_url(storage_path, expiry_seconds=3600)
+    logger.info("[SONORO] cover_uploaded document_id=%s user_id=%s", document_id, current_user.id)
+    return {"cover_url": cover_url}
+
+
+@router.delete(
+    "/{document_id}/cover",
+    summary="Reset Cover",
+    description="Remove custom cover and revert to auto-generated artwork.",
+)
+async def reset_document_cover(
+    document_id: UUID,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    from app.db.models.document import Document as _DocModel
+
+    doc_result = await db.execute(
+        select(_DocModel).where(
+            _DocModel.id == document_id,
+            _DocModel.user_id == current_user.id,
+        )
+    )
+    doc = doc_result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    doc.cover_object_key = None
+    await db.commit()
+    logger.info("[SONORO] cover_reset document_id=%s user_id=%s", document_id, current_user.id)
+    return {"cover_url": None}
+
+
+# ============================================
+# AUDIO DOWNLOAD ENDPOINT
+# ============================================
+
+import re as _re
+import unicodedata as _unicodedata
+
+
+def _safe_filename(title: str, fallback: str = "audiobook") -> str:
+    """Produce a filesystem-safe ASCII filename from a display title."""
+    # Normalize unicode → decompose accents, then strip non-ASCII
+    nfkd = _unicodedata.normalize("NFKD", title)
+    ascii_str = nfkd.encode("ascii", "ignore").decode("ascii")
+    # Replace non-alphanumeric (except dash/space/dot) with space
+    safe = _re.sub(r"[^\w\s\-.]", " ", ascii_str).strip()
+    safe = _re.sub(r"\s+", " ", safe)
+    return (safe[:120] or fallback) + ".mp3"
+
+
+@router.get(
+    "/{document_id}/audio",
+    summary="Download Audiobook",
+    description="Redirect to a presigned download URL with the audiobook title as filename.",
+)
+async def download_audiobook(
+    document_id: UUID,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    from app.db.models.document import Document as _DocModel
+    from fastapi.responses import RedirectResponse
+
+    doc_result = await db.execute(
+        select(_DocModel).where(
+            _DocModel.id == document_id,
+            _DocModel.user_id == current_user.id,
+        )
+    )
+    doc = doc_result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    if not doc.final_audio_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Audiobook is not ready yet.",
+        )
+
+    human_title = (
+        getattr(doc, "display_title", None)
+        or doc.original_filename.removesuffix(".pdf")
+        or "audiobook"
+    )
+    filename = _safe_filename(human_title)
+
+    storage_service = get_storage_service()
+    try:
+        # generate_audio_url returns the presigned URL; we need a download variant.
+        # For S3, generate a presigned URL with Content-Disposition set.
+        if hasattr(storage_service, "client"):
+            # S3StorageService — generate with Content-Disposition
+            from botocore.exceptions import ClientError as _CE
+            try:
+                url = storage_service.client.generate_presigned_url(
+                    "get_object",
+                    Params={
+                        "Bucket": storage_service.bucket,
+                        "Key": doc.final_audio_path,
+                        "ResponseContentDisposition": f'attachment; filename="{filename}"',
+                        "ResponseContentType": "audio/mpeg",
+                    },
+                    ExpiresIn=3600,
+                )
+            except _CE as exc:
+                raise HTTPException(status_code=500, detail="Could not generate download URL") from exc
+        else:
+            # Local storage — return the local audio URL (browser download attribute handles it)
+            url = await storage_service.generate_audio_url(doc.final_audio_path, expiry_seconds=3600)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Could not generate download URL") from exc
+
+    logger.info("[SONORO] audiobook_downloaded document_id=%s user_id=%s", document_id, current_user.id)
+    return RedirectResponse(url=url, status_code=302)
 
 
 # ============================================

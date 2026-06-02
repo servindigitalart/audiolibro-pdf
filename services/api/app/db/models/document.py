@@ -135,6 +135,40 @@ class Document(Base):
         comment="Narration profile used for the most recent successful generation"
     )
 
+    # ── Book Intelligence — enriched metadata ─────────────────────────────────
+    author = Column(
+        String(512),
+        nullable=True,
+        comment="Detected or user-provided author name"
+    )
+    subtitle = Column(
+        String(512),
+        nullable=True,
+        comment="Book subtitle from metadata provider"
+    )
+    isbn = Column(
+        String(20),
+        nullable=True,
+        comment="ISBN-13 or ISBN-10 from metadata provider"
+    )
+    metadata_source = Column(
+        String(50),
+        nullable=True,
+        comment="Which system produced the final metadata: local, google_books, open_library, manual"
+    )
+    metadata_confidence = Column(
+        Float,
+        nullable=True,
+        comment="Metadata confidence score 0.0–1.0"
+    )
+
+    # User-uploaded cover art (stored as object storage key)
+    cover_object_key = Column(
+        String(1024),
+        nullable=True,
+        comment="Object-storage key for user-uploaded cover image; NULL = use generated cover"
+    )
+
     # Audio output (BLOCK 6C)
     final_audio_path = Column(
         String(1024),

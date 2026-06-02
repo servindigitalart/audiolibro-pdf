@@ -8,8 +8,9 @@ import {
   getDocument,
   getChapters,
   getErrorMessage,
+  patchBookMetadata,
 } from '@/lib/api/client';
-import type { Chapter, ProcessingJob, PreflightResult } from '@/lib/api/types';
+import type { Chapter, ProcessingJob, PreflightResult, Document } from '@/lib/api/types';
 import { fmtFileSize, fmtDuration, fmtChars } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import VoicePicker from '@/components/upload/VoicePicker';
@@ -230,6 +231,12 @@ export default function UploadZone() {
   const [stuckMessage, setStuckMessage]               = useState<string | null>(null);
   const [showingCompletion, setShowingCompletion]     = useState(false);
   const [failedChunks, setFailedChunks]               = useState<{ done: number; total: number } | null>(null);
+  // Book Intelligence — detected metadata
+  const [bookMeta, setBookMeta]                       = useState<Pick<Document, 'title'|'author'|'subtitle'|'isbn'|'metadata_source'|'metadata_confidence'|'cover_url'> | null>(null);
+  const [bookMetaLoading, setBookMetaLoading]         = useState(false);
+  const [editingBookMeta, setEditingBookMeta]         = useState(false);
+  const [editTitle, setEditTitle]                     = useState('');
+  const [editAuthor, setEditAuthor]                   = useState('');
   // Smooth display percentage — interpolated toward the backend-confirmed target
   const [displayPct, setDisplayPct]                   = useState(0);
   const targetPctRef    = useRef(0);
@@ -240,6 +247,52 @@ export default function UploadZone() {
   const prevStageRef    = useRef<string>('');
 
   // ── Analytics ──────────────────────────────────────────────────────────────
+
+  // ── Book Intelligence: poll for detected metadata after preflight ────────────
+  // Background enrichment takes ~3-5s. Wait 3.5s then fetch once; if still empty
+  // retry at 8s. If metadata appears, show the detection card.
+  useEffect(() => {
+    if (stage !== 'preflight' || !docId) { setBookMeta(null); return; }
+
+    setBookMetaLoading(true);
+    let cancelled = false;
+
+    async function fetchMeta(attempt = 0) {
+      if (cancelled) return;
+      try {
+        const doc = await getDocument(docId!);
+        if (cancelled) return;
+        if (doc?.metadata_source) {
+          setBookMeta({
+            title:               doc.title,
+            author:              doc.author,
+            subtitle:            doc.subtitle,
+            isbn:                doc.isbn,
+            metadata_source:     doc.metadata_source,
+            metadata_confidence: doc.metadata_confidence,
+            cover_url:           doc.cover_url,
+          });
+          setBookMetaLoading(false);
+          track('metadata_detected', {
+            source:     doc.metadata_source,
+            confidence: doc.metadata_confidence ?? 0,
+          });
+        } else if (attempt < 3) {
+          // Not ready yet — retry with back-off: 3.5s, 4s, 4s
+          const delay = [3500, 4000, 4000][attempt] ?? 5000;
+          setTimeout(() => fetchMeta(attempt + 1), delay);
+        } else {
+          setBookMetaLoading(false);
+        }
+      } catch {
+        if (!cancelled) setBookMetaLoading(false);
+      }
+    }
+
+    // First attempt after 3.5s
+    const t = setTimeout(() => fetchMeta(0), 3500);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [stage, docId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const paywallVisible = stage === 'preflight' && !!preflight?.quota_exceeded;
   useEffect(() => {
@@ -459,6 +512,9 @@ export default function UploadZone() {
     targetPctRef.current    = 0;
     displayPctRef.current   = 0;
     setDisplayPct(0);
+    setBookMeta(null);
+    setBookMetaLoading(false);
+    setEditingBookMeta(false);
   }
 
   // ── Preflight ──────────────────────────────────────────────────────────────
@@ -631,6 +687,153 @@ export default function UploadZone() {
               <p className="text-sm font-semibold text-sonoro-900">{procLabel}</p>
             </div>
           </div>
+
+          {/* ── Detected Book card ───────────────────────────────────────────── */}
+          {(bookMetaLoading || bookMeta) && (
+            <div className="mb-5 rounded-xl border border-sonoro-amber/30 bg-sonoro-amber-light/20 overflow-hidden animate-fade-in">
+              <div className="px-4 pt-3 pb-0.5 flex items-center justify-between">
+                <p className="text-[10px] font-semibold text-sonoro-amber-dark uppercase tracking-wider">
+                  Detected Book
+                </p>
+                {bookMeta && !editingBookMeta && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditTitle(bookMeta.title ?? '');
+                      setEditAuthor(bookMeta.author ?? '');
+                      setEditingBookMeta(true);
+                    }}
+                    className="text-[10px] font-semibold text-sonoro-amber-dark hover:underline"
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
+
+              {bookMetaLoading && !bookMeta && (
+                <div className="flex items-center gap-2 px-4 py-3">
+                  <svg className="w-3.5 h-3.5 text-sonoro-amber-dark animate-spin shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" strokeOpacity=".2"/>
+                    <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="4" strokeLinecap="round"/>
+                  </svg>
+                  <p className="text-xs text-sonoro-600">Identifying book…</p>
+                </div>
+              )}
+
+              {bookMeta && !editingBookMeta && (
+                <div className="px-4 py-3 space-y-1">
+                  <div className="flex items-start gap-3">
+                    {bookMeta.cover_url && (
+                      <img
+                        src={bookMeta.cover_url}
+                        alt=""
+                        className="w-10 h-14 rounded object-cover shadow-card shrink-0"
+                        loading="lazy"
+                      />
+                    )}
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-sonoro-900 leading-snug truncate">{bookMeta.title}</p>
+                      {bookMeta.author && (
+                        <p className="text-xs text-sonoro-600 truncate mt-0.5">{bookMeta.author}</p>
+                      )}
+                      {bookMeta.subtitle && (
+                        <p className="text-[11px] text-sonoro-muted truncate mt-0.5 italic">{bookMeta.subtitle}</p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 mt-2 pt-1.5 border-t border-sonoro-amber/20">
+                    {bookMeta.cover_url && (
+                      <span className="flex items-center gap-1 text-[10px] text-emerald-700 font-medium">
+                        <svg className="w-3 h-3" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true"><path d="M9.5 2.5L5 7 2.5 4.5l-1 1L5 9l5.5-5.5-1-1z"/></svg>
+                        Cover found
+                      </span>
+                    )}
+                    {bookMeta.isbn && (
+                      <span className="text-[10px] text-sonoro-400">ISBN {bookMeta.isbn}</span>
+                    )}
+                    <span className={cn(
+                      'ml-auto text-[10px] font-semibold px-1.5 py-0.5 rounded-full',
+                      (bookMeta.metadata_confidence ?? 0) >= 0.85
+                        ? 'bg-emerald-50 text-emerald-700'
+                        : (bookMeta.metadata_confidence ?? 0) >= 0.60
+                          ? 'bg-amber-50 text-sonoro-amber-dark'
+                          : 'bg-sonoro-surface text-sonoro-400',
+                    )}>
+                      {(bookMeta.metadata_confidence ?? 0) >= 0.85 ? '✓ High confidence'
+                        : (bookMeta.metadata_confidence ?? 0) >= 0.60 ? 'Medium confidence'
+                        : 'Low confidence'}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {bookMeta && editingBookMeta && (
+                <div className="px-4 py-3 space-y-2">
+                  <div>
+                    <label className="block text-[10px] font-semibold text-sonoro-500 uppercase tracking-wider mb-1">Title</label>
+                    <input
+                      type="text"
+                      value={editTitle}
+                      onChange={e => setEditTitle(e.target.value)}
+                      className="input-base w-full text-sm"
+                      placeholder="Book title"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-sonoro-500 uppercase tracking-wider mb-1">Author</label>
+                    <input
+                      type="text"
+                      value={editAuthor}
+                      onChange={e => setEditAuthor(e.target.value)}
+                      className="input-base w-full text-sm"
+                      placeholder="Author name"
+                    />
+                  </div>
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (!docId) return;
+                        try {
+                          await patchBookMetadata(docId, {
+                            display_title: editTitle || undefined,
+                            author:        editAuthor || undefined,
+                          });
+                          setBookMeta(prev => prev ? {
+                            ...prev,
+                            title: editTitle || prev.title,
+                            author: editAuthor || prev.author,
+                          } : prev);
+                          setEditingBookMeta(false);
+                          track('metadata_accepted', { document_id: docId });
+                        } catch { /* non-fatal */ }
+                      }}
+                      className="btn-primary btn-sm"
+                    >
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditingBookMeta(false)}
+                      className="btn-outline btn-sm"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingBookMeta(false);
+                        track('metadata_rejected', { document_id: docId });
+                      }}
+                      className="ml-auto text-xs text-sonoro-400 hover:text-sonoro-600 transition-colors"
+                    >
+                      Use filename instead
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Chapter preview */}
           <div className="mb-5 rounded-xl border border-sonoro-border/60 bg-sonoro-surface/50 px-4 py-3">

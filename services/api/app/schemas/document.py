@@ -104,6 +104,7 @@ class DocumentListItem(BaseModel):
     filename: str
     original_filename: str
     display_title: Optional[str] = None
+    author: Optional[str] = None
     file_size_bytes: int
     file_size_mb: float
     mime_type: str
@@ -111,6 +112,7 @@ class DocumentListItem(BaseModel):
     processing_status: str
     page_count: Optional[int] = None
     language_detected: Optional[str] = None
+    cover_url: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     
@@ -187,6 +189,16 @@ class DocumentDetail(BaseModel):
     processing_started_at: Optional[datetime] = None
     processing_completed_at: Optional[datetime] = None
     
+    # Book Intelligence metadata
+    author: Optional[str] = Field(None, description="Detected or user-provided author name")
+    subtitle: Optional[str] = Field(None, description="Book subtitle")
+    isbn: Optional[str] = Field(None, description="ISBN-13 or ISBN-10")
+    metadata_source: Optional[str] = Field(None, description="Source: local, google_books, open_library, manual")
+    metadata_confidence: Optional[float] = Field(None, description="Metadata confidence score 0.0–1.0")
+
+    # Cover art
+    cover_url: Optional[str] = Field(None, description="Presigned URL for custom cover image")
+
     # Audio output
     audio_url: Optional[str] = Field(None, description="Presigned URL for audiobook playback")
     audio_duration_seconds: Optional[int] = Field(None, description="Total duration in seconds")

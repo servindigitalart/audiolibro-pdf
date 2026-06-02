@@ -28,12 +28,13 @@ const SIZE_CLASSES = {
 };
 
 interface Props {
-  title:     string;
-  size?:     keyof typeof SIZE_CLASSES;
+  title:      string;
+  size?:      keyof typeof SIZE_CLASSES;
   className?: string;
+  imageUrl?:  string;
 }
 
-export default function BookCover({ title, size = 'sm', className }: Props) {
+export default function BookCover({ title, size = 'sm', className, imageUrl }: Props) {
   const h       = hashString(title);
   const palette = PALETTES[h % PALETTES.length];
   // Subtle diagonal stripe pattern — unique angle per title
@@ -45,6 +46,28 @@ export default function BookCover({ title, size = 'sm', className }: Props) {
   const mid   = Math.ceil(words.length / 2);
   const line1 = words.slice(0, mid).join(' ');
   const line2 = words.slice(mid).join(' ');
+
+  // Custom cover image — takes priority over the generated gradient
+  if (imageUrl) {
+    return (
+      <div
+        className={cn(
+          outer,
+          'relative overflow-hidden flex-shrink-0 shadow-md select-none',
+          className,
+        )}
+        aria-hidden="true"
+      >
+        <img
+          src={imageUrl}
+          alt=""
+          className="absolute inset-0 w-full h-full object-cover"
+          loading="lazy"
+          decoding="async"
+        />
+      </div>
+    );
+  }
 
   return (
     <div

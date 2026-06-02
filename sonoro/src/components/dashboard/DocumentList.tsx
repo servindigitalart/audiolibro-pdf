@@ -1,17 +1,32 @@
 import { useState, useEffect, useRef } from 'react';
 import type { Document } from '@/lib/api/types';
-import { deleteDocument, retryProcessing, renameDocumentTitle, getErrorMessage } from '@/lib/api/client';
+import {
+  deleteDocument, retryProcessing, cancelDocument,
+  renameDocumentTitle, getErrorMessage,
+} from '@/lib/api/client';
+import { track } from '@/lib/analytics';
 import { getAllProgress } from '@/hooks/usePlaybackProgress';
 import type { PlaybackProgress } from '@/hooks/usePlaybackProgress';
-import { fmtRelative, fmtFileSize, fmtDuration } from '@/lib/utils';
+import { fmtRelative, fmtFileSize } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import BookCover from '@/components/ui/BookCover';
+
+// Stuck threshold: pending job older than 10 minutes is considered stuck
+const STUCK_MS = 10 * 60 * 1000;
+
+function isStuck(doc: Document): boolean {
+  if (doc.status !== 'pending' && doc.status !== 'processing') return false;
+  const ts = doc.updated_at ?? doc.upload_date;
+  if (!ts) return false;
+  return Date.now() - new Date(ts).getTime() > STUCK_MS;
+}
 
 const STATUS_CONFIG = {
   pending:    { label: 'Queued',     cls: 'badge-neutral', dot: 'bg-sonoro-400'  },
   processing: { label: 'Processing', cls: 'badge-warning',  dot: 'bg-amber-500'  },
   completed:  { label: 'Ready',      cls: 'badge-success',  dot: 'bg-emerald-500' },
   failed:     { label: 'Failed',     cls: 'badge-error',    dot: 'bg-red-500'    },
+  stuck:      { label: 'Stuck',      cls: 'badge-error',    dot: 'bg-red-400'    },
 } as const;
 
 interface Props {
@@ -27,15 +42,37 @@ function remainingLabel(p: PlaybackProgress): string {
   return 'Almost done';
 }
 
+// Spinner SVG reused across buttons
+const Spinner = () => (
+  <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" strokeOpacity=".2"/>
+    <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="4" strokeLinecap="round"/>
+  </svg>
+);
+
+const RetryIcon = () => (
+  <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M1.5 4.5A6.5 6.5 0 0 1 13 3M14.5 11.5A6.5 6.5 0 0 1 3 13M14.5 8V4.5H11"/>
+  </svg>
+);
+
 export default function DocumentList({ initialDocuments }: Props) {
-  const [docs, setDocs]         = useState<Document[]>(initialDocuments);
-  const [deleting, setDeleting] = useState<string | null>(null);
-  const [retrying, setRetrying] = useState<string | null>(null);
+  const [docs, setDocs]               = useState<Document[]>(initialDocuments);
+  const [deleting, setDeleting]       = useState<string | null>(null);
+  const [retrying, setRetrying]       = useState<string | null>(null);
+  const [cancelling, setCancelling]   = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState<string | null>(null);
   const [editValue, setEditValue]       = useState('');
   const [savingTitle, setSavingTitle]   = useState<string | null>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const [progressMap, setProgressMap] = useState<Record<string, PlaybackProgress>>({});
+  // Track client-side time so isStuck() is evaluated reactively
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
 
   // Load playback progress from localStorage (client-only)
   useEffect(() => {
@@ -58,11 +95,12 @@ export default function DocumentList({ initialDocuments }: Props) {
     }
   }
 
-  async function handleRetry(id: string) {
+  async function handleRetry(id: string, stuck: boolean) {
     setRetrying(id);
     try {
       await retryProcessing(id);
-      setDocs(prev => prev.map(d => d.id === id ? { ...d, status: 'pending' } : d));
+      setDocs(prev => prev.map(d => d.id === id ? { ...d, status: 'pending', updated_at: new Date().toISOString() } : d));
+      track(stuck ? 'stuck_job_retried' : 'audiobook_started', { document_id: id });
     } catch (err) {
       alert(getErrorMessage(err));
     } finally {
@@ -70,10 +108,22 @@ export default function DocumentList({ initialDocuments }: Props) {
     }
   }
 
+  async function handleCancel(id: string) {
+    setCancelling(id);
+    try {
+      await cancelDocument(id);
+      setDocs(prev => prev.filter(d => d.id !== id));
+      track('stuck_job_cancelled', { document_id: id });
+    } catch (err) {
+      alert(getErrorMessage(err));
+    } finally {
+      setCancelling(null);
+    }
+  }
+
   function startRename(doc: Document) {
     setEditingTitle(doc.id);
     setEditValue(doc.title);
-    // Focus after render
     requestAnimationFrame(() => titleInputRef.current?.select());
   }
 
@@ -84,6 +134,7 @@ export default function DocumentList({ initialDocuments }: Props) {
     try {
       await renameDocumentTitle(id, trimmed);
       setDocs(prev => prev.map(d => d.id === id ? { ...d, title: trimmed, display_title: trimmed } : d));
+      track('audiobook_renamed', { document_id: id });
     } catch (err) {
       alert(getErrorMessage(err));
     } finally {
@@ -114,17 +165,20 @@ export default function DocumentList({ initialDocuments }: Props) {
   return (
     <div className="space-y-2">
       {docs.map((doc, listIdx) => {
-        const s           = STATUS_CONFIG[doc.status] ?? STATUS_CONFIG.pending;
-        const isActive    = doc.status === 'processing' || doc.status === 'pending';
+        const stuck      = isStuck(doc);
+        const statusKey  = stuck && (doc.status === 'pending' || doc.status === 'processing') ? 'stuck' : doc.status;
+        const s          = STATUS_CONFIG[statusKey] ?? STATUS_CONFIG.pending;
+        const isActive   = doc.status === 'processing' || (doc.status === 'pending' && !stuck);
         const isCompleted = doc.status === 'completed';
-        const isFailed    = doc.status === 'failed';
-        const title       = doc.title || doc.filename;
-        const saved       = isCompleted ? progressMap[doc.id] : undefined;
-        const savedPct    = saved && saved.totalDuration > 0
+        const isFailed   = doc.status === 'failed';
+        const isPending  = doc.status === 'pending';
+        const title      = doc.title || doc.filename;
+        const saved      = isCompleted ? progressMap[doc.id] : undefined;
+        const savedPct   = saved && saved.totalDuration > 0
           ? Math.round((saved.currentTime / saved.totalDuration) * 100)
           : 0;
 
-        // Determine which CTA to show for completed docs
+        // CTA for completed docs
         let listenLabel = 'Start listening';
         let listenHref  = `/dashboard/documents/${doc.id}`;
         if (saved?.completed) {
@@ -140,12 +194,13 @@ export default function DocumentList({ initialDocuments }: Props) {
             className={cn(
               'group card-base flex items-center gap-3 px-4 py-3.5 sm:px-5 sm:py-4 transition-all duration-200',
               isCompleted && 'hover:shadow-hover hover:-translate-y-px',
+              stuck && 'border-red-200',
             )}
             style={{ animationDelay: `${listIdx * 40}ms` }}
           >
             {/* Book cover */}
             <div className="shrink-0 transition-transform duration-200 group-hover:scale-105">
-              <BookCover title={title} size="sm" />
+              <BookCover title={title} size="sm" imageUrl={doc.cover_url} />
             </div>
 
             {/* Document info */}
@@ -186,6 +241,13 @@ export default function DocumentList({ initialDocuments }: Props) {
                 {doc.upload_date ? ` · ${fmtRelative(doc.upload_date)}` : ''}
               </p>
 
+              {/* Stuck microcopy */}
+              {stuck && (
+                <p className="text-[11px] text-red-500 mt-1 leading-snug">
+                  This conversion is taking longer than expected.
+                </p>
+              )}
+
               {/* Playback progress bar (completed docs with history) */}
               {isCompleted && saved && savedPct > 0 && !saved.completed && (
                 <div className="mt-2">
@@ -218,6 +280,8 @@ export default function DocumentList({ initialDocuments }: Props) {
 
             {/* Row actions — always visible on mobile, revealed on hover on desktop */}
             <div className="flex items-center gap-1 shrink-0 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity duration-150">
+
+              {/* Completed: Listen/Resume */}
               {isCompleted && (
                 <a
                   href={listenHref}
@@ -231,48 +295,76 @@ export default function DocumentList({ initialDocuments }: Props) {
                 </a>
               )}
 
+              {/* Failed: Retry */}
               {isFailed && (
                 <button
-                  onClick={() => handleRetry(doc.id)}
+                  onClick={() => handleRetry(doc.id, false)}
                   disabled={retrying === doc.id}
                   className="btn-outline btn-sm gap-1.5"
                   aria-label={`Retry ${title}`}
                 >
-                  {retrying === doc.id ? (
-                    <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" strokeOpacity=".2"/>
-                      <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="4" strokeLinecap="round"/>
-                    </svg>
-                  ) : (
-                    <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M1.5 4.5A6.5 6.5 0 0 1 13 3M14.5 11.5A6.5 6.5 0 0 1 3 13M14.5 8V4.5H11"/>
-                    </svg>
-                  )}
+                  {retrying === doc.id ? <Spinner /> : <RetryIcon />}
                   Retry
                 </button>
               )}
 
-              {/* Delete button */}
-              <button
-                onClick={() => handleDelete(doc.id, title)}
-                disabled={deleting === doc.id}
-                className={cn(
-                  'flex h-8 w-8 items-center justify-center rounded-xl text-sonoro-300 hover:text-red-500 hover:bg-red-50 transition-all duration-150',
-                  deleting === doc.id && 'opacity-50 pointer-events-none',
-                )}
-                aria-label={`Delete ${title}`}
-              >
-                {deleting === doc.id ? (
-                  <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" strokeOpacity=".2"/>
-                    <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="4" strokeLinecap="round"/>
-                  </svg>
-                ) : (
-                  <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-                    <path fillRule="evenodd" d="M5 3.25V4H2.75a.75.75 0 000 1.5h.3l.815 8.15A1.5 1.5 0 005.357 15h5.285a1.5 1.5 0 001.493-1.35l.815-8.15h.3a.75.75 0 000-1.5H11v-.75A2.25 2.25 0 008.75 1h-1.5A2.25 2.25 0 005 3.25zm2.25-.75a.75.75 0 00-.75.75V4h3v-.75a.75.75 0 00-.75-.75h-1.5zM6.05 6a.75.75 0 01.787.713l.275 5.5a.75.75 0 01-1.498.075l-.275-5.5A.75.75 0 016.05 6zm3.9 0a.75.75 0 01.712.787l-.275 5.5a.75.75 0 01-1.498-.075l.275-5.5a.75.75 0 01.786-.712z" clipRule="evenodd"/>
-                  </svg>
-                )}
-              </button>
+              {/* Stuck queued/processing: Retry + Cancel */}
+              {stuck && (
+                <>
+                  <button
+                    onClick={() => handleRetry(doc.id, true)}
+                    disabled={retrying === doc.id}
+                    className="btn-outline btn-sm gap-1.5"
+                    aria-label={`Retry ${title}`}
+                  >
+                    {retrying === doc.id ? <Spinner /> : <RetryIcon />}
+                    Retry
+                  </button>
+                  <button
+                    onClick={() => handleCancel(doc.id)}
+                    disabled={cancelling === doc.id}
+                    className="btn-outline btn-sm gap-1.5 text-red-500 border-red-200 hover:bg-red-50"
+                    aria-label={`Cancel ${title}`}
+                  >
+                    {cancelling === doc.id ? <Spinner /> : null}
+                    Cancel
+                  </button>
+                </>
+              )}
+
+              {/* Fresh queued: Cancel only */}
+              {isPending && !stuck && (
+                <button
+                  onClick={() => handleCancel(doc.id)}
+                  disabled={cancelling === doc.id}
+                  className="btn-outline btn-sm gap-1.5 text-sonoro-500"
+                  aria-label={`Cancel ${title}`}
+                >
+                  {cancelling === doc.id ? <Spinner /> : null}
+                  Cancel
+                </button>
+              )}
+
+              {/* Delete button — shown for failed, stuck, and completed */}
+              {(isFailed || stuck || isCompleted) && (
+                <button
+                  onClick={() => handleDelete(doc.id, title)}
+                  disabled={deleting === doc.id}
+                  className={cn(
+                    'flex h-8 w-8 items-center justify-center rounded-xl text-sonoro-300 hover:text-red-500 hover:bg-red-50 transition-all duration-150',
+                    deleting === doc.id && 'opacity-50 pointer-events-none',
+                  )}
+                  aria-label={`Delete ${title}`}
+                >
+                  {deleting === doc.id ? (
+                    <Spinner />
+                  ) : (
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                      <path fillRule="evenodd" d="M5 3.25V4H2.75a.75.75 0 000 1.5h.3l.815 8.15A1.5 1.5 0 005.357 15h5.285a1.5 1.5 0 001.493-1.35l.815-8.15h.3a.75.75 0 000-1.5H11v-.75A2.25 2.25 0 008.75 1h-1.5A2.25 2.25 0 005 3.25zm2.25-.75a.75.75 0 00-.75.75V4h3v-.75a.75.75 0 00-.75-.75h-1.5zM6.05 6a.75.75 0 01.787.713l.275 5.5a.75.75 0 01-1.498.075l-.275-5.5A.75.75 0 016.05 6zm3.9 0a.75.75 0 01.712.787l-.275 5.5a.75.75 0 01-1.498-.075l.275-5.5a.75.75 0 01.786-.712z" clipRule="evenodd"/>
+                    </svg>
+                  )}
+                </button>
+              )}
             </div>
           </div>
         );

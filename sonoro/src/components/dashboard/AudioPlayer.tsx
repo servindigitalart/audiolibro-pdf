@@ -118,6 +118,8 @@ interface Props {
   chapters:      Chapter[];
   documentTitle: string;
   documentId?:   string;
+  coverUrl?:     string;
+  author?:       string;
   autoplay?:     boolean;
 }
 
@@ -467,7 +469,7 @@ function CompletionOverlay({
 
       <div className="relative flex flex-col items-center py-10 px-8 text-center">
         {/* Book cover */}
-        <BookCover title={documentTitle} size="lg" className="mb-5 shadow-amber" />
+        <BookCover title={documentTitle} size="lg" className="mb-5 shadow-amber" imageUrl={coverUrl} />
 
         {/* Completion star */}
         <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-sonoro-amber/10 ring-4 ring-sonoro-amber/20">
@@ -569,7 +571,7 @@ function ImmersiveOverlay({
         <div className="flex flex-col items-center gap-5">
           {/* Large cover art */}
           <div className="animate-scale-in" style={{ animationDelay: '60ms', animationFillMode: 'both' }}>
-            <BookCover title={documentTitle} size="lg" className="shadow-modal" />
+            <BookCover title={documentTitle} size="lg" className="shadow-modal" imageUrl={coverUrl} />
           </div>
 
           {/* Chapter list */}
@@ -808,7 +810,7 @@ function SleepTimer({
 }
 
 // ── Main AudioPlayer ──────────────────────────────────────────────────────────
-export default function AudioPlayer({ chapters, documentTitle, documentId = '', autoplay = false }: Props) {
+export default function AudioPlayer({ chapters, documentTitle, documentId = '', coverUrl, author, autoplay = false }: Props) {
   // Load saved position once on mount — drives initialChapterIdx + initialTime in the hook
   const savedProgress = useMemo(() => documentId ? loadProgress(documentId) : null, [documentId]);
 
@@ -908,24 +910,40 @@ export default function AudioPlayer({ chapters, documentTitle, documentId = '', 
   // Update metadata whenever the chapter changes
   useEffect(() => {
     if (!('mediaSession' in navigator)) return;
-    // Generate a square cover and produce the required sizes from the same source image.
-    // We generate at 512px (cheapest canvas size that looks sharp on all lock screens)
-    // and declare all sizes — the OS picks its preferred one.
-    const coverDataUrl = generateCoverDataUrl(documentTitle, 512);
-    const artwork: MediaImage[] = coverDataUrl
-      ? [96, 128, 192, 256, 512].map(sz => ({
+
+    let artwork: MediaImage[] = [];
+
+    if (coverUrl) {
+      // Use the actual cover image — provide multiple size hints for the OS
+      artwork = [96, 128, 192, 256, 512].map(sz => ({
+        src:   coverUrl,
+        sizes: `${sz}x${sz}`,
+        type:  'image/jpeg',
+      }));
+    } else {
+      // Fall back to canvas-generated cover
+      const coverDataUrl = generateCoverDataUrl(documentTitle, 512);
+      if (coverDataUrl) {
+        artwork = [96, 128, 192, 256, 512].map(sz => ({
           src:   coverDataUrl,
           sizes: `${sz}x${sz}`,
           type:  'image/png',
-        }))
-      : [];
+        }));
+      }
+    }
+
+    // Fix generic "Full Document" chapter title for single-chapter audiobooks
+    const chapterTitle = chapter?.title && chapter.title !== 'Full Document'
+      ? chapter.title
+      : documentTitle;
+
     navigator.mediaSession.metadata = new MediaMetadata({
-      title:  chapter?.title ?? documentTitle,
-      artist: documentTitle,
+      title:  chapterTitle,
+      artist: author || documentTitle,  // prefer real author on lock screen
       album:  'Sonoro',
       artwork,
     });
-  }, [currentIdx, documentTitle]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentIdx, documentTitle, coverUrl, author]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keep playback state in sync with the OS
   useEffect(() => {
@@ -1100,11 +1118,15 @@ export default function AudioPlayer({ chapters, documentTitle, documentId = '', 
         {/* Header: now playing */}
         <div className="flex items-start justify-between gap-4 px-6 pt-5 pb-4 border-b border-sonoro-border">
           <div className="flex items-center gap-3 min-w-0">
-            <BookCover title={documentTitle} size="sm" />
+            <BookCover title={documentTitle} size="sm" imageUrl={coverUrl} />
             <div className="min-w-0">
               <p className="label-sm mb-1">Now playing</p>
               <p className="text-sm font-bold text-sonoro-900 truncate leading-snug">
-                {chapter?.title ?? (hasAudio ? '—' : 'No audio available')}
+                {chapter?.title && chapter.title !== 'Full Document'
+                  ? chapter.title
+                  : chapters.length <= 1
+                    ? 'Complete audiobook'
+                    : (hasAudio ? '—' : 'No audio available')}
               </p>
               <div className="flex items-center gap-1.5 mt-0.5">
                 <p className="text-xs text-sonoro-muted truncate">{documentTitle}</p>

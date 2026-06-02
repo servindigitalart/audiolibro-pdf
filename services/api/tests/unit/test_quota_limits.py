@@ -37,7 +37,7 @@ def test_get_plan_limits_returns_quota_limits_instance():
 # ── FREE tier specifics ───────────────────────────────────────────────────────
 
 def test_free_tier_character_limit():
-    assert get_plan_limits(PlanTier.FREE).monthly_char_limit == 30_000
+    assert get_plan_limits(PlanTier.FREE).monthly_char_limit == 50_000
 
 
 def test_free_tier_allows_small_spanish_pdf():

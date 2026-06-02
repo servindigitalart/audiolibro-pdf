@@ -111,7 +111,9 @@ export default function MiniPlayer() {
                 'Finished listening'
               ) : (
                 <>
-                  {progress.chapterTitle || `Chapter ${progress.chapterIdx + 1}`}
+                  {progress.chapterTitle && progress.chapterTitle !== 'Full Document'
+                    ? progress.chapterTitle
+                    : `Part ${progress.chapterIdx + 1}`}
                   {' · '}
                   {formatRemaining(remaining)}
                 </>
