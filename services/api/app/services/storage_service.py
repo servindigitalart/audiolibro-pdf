@@ -18,7 +18,9 @@ Backend selection via STORAGE_BACKEND env var:
 import io
 import logging
 import os
+import re
 import shutil
+import unicodedata
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
@@ -28,6 +30,44 @@ from fastapi import HTTPException, UploadFile, status
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+# ── S3 metadata sanitization ───────────────────────────────────────────────────
+#
+# S3 (and S3-compatible) object metadata values must be US-ASCII.  Any non-ASCII
+# character causes botocore to raise ParamValidationError and crashes the upload.
+# This helper makes every metadata dict safe before it reaches boto3.
+#
+# Strategy:
+#   1. Strip rich Unicode to ASCII-only text (NFKD decompose → encode ascii/ignore).
+#   2. Replace any remaining non-printable / control characters with "?".
+#   3. Truncate long values to 256 bytes (S3 header limit is ~2 KB total per object,
+#      individual values should stay short).
+#
+# Human-readable Unicode data (chapter titles, book titles) must be stored in the
+# database ONLY.  S3 metadata should carry only safe technical identifiers.
+
+_S3_META_MAX_BYTES = 256
+
+
+def sanitize_s3_metadata(meta: dict[str, str]) -> dict[str, str]:
+    """Return a new dict with every value cleaned to US-ASCII for S3/R2 upload."""
+    clean: dict[str, str] = {}
+    for k, v in meta.items():
+        if not isinstance(v, str):
+            v = str(v)
+        # NFKD decompose → drop non-ASCII codepoints → ASCII bytes → str
+        nfkd = unicodedata.normalize("NFKD", v)
+        ascii_bytes = nfkd.encode("ascii", "ignore")
+        ascii_str = ascii_bytes.decode("ascii")
+        # Replace non-printable (control chars, null, etc.) with "?"
+        ascii_str = re.sub(r"[^\x20-\x7E]", "?", ascii_str)
+        # Truncate to S3 safe length
+        ascii_str = ascii_str[:_S3_META_MAX_BYTES]
+        # Key itself must also be ASCII (keys are typically programmer-chosen, but guard anyway)
+        safe_key = re.sub(r"[^\x20-\x7E]", "_", k)[:128]
+        clean[safe_key] = ascii_str
+    return clean
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -260,6 +300,7 @@ class S3StorageService:
         }
         if metadata:
             upload_metadata.update(metadata)
+        upload_metadata = sanitize_s3_metadata(upload_metadata)
 
         file.file.seek(0)
         try:
@@ -422,6 +463,7 @@ class S3StorageService:
         }
         if metadata:
             upload_metadata.update(metadata)
+        upload_metadata = sanitize_s3_metadata(upload_metadata)
 
         try:
             self.client.put_object(
@@ -511,6 +553,7 @@ class S3StorageService:
         }
         if metadata:
             upload_metadata.update(metadata)
+        upload_metadata = sanitize_s3_metadata(upload_metadata)
 
         try:
             self.client.upload_file(

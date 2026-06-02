@@ -39,6 +39,17 @@ from app.financial.quota.quota_service import QuotaExhaustedError as _QuotaExhau
 
 logger = logging.getLogger(__name__)
 
+# Exceptions that are deterministic (same inputs → same failure every time).
+# Retrying these wastes quota and delays error surfacing.  When _dispatch_job
+# raises one of these, it is caught BEFORE the generic re-raise so Celery
+# receives a normal return (task succeeds), leaving the job in FAILED state.
+_DETERMINISTIC_ERRORS: tuple[type[Exception], ...] = ()
+try:
+    from botocore.exceptions import ParamValidationError as _BotoParamError
+    _DETERMINISTIC_ERRORS = (_BotoParamError,)
+except ImportError:
+    pass
+
 # Google TTS hard limit is 5000 chars per request; stay safely below it.
 _TTS_CHUNK_SIZE = 4500
 
@@ -241,6 +252,14 @@ async def _dispatch_job(job_id: UUID, task_id: str, retry_count: int) -> None:
         )
         await _mark_job_failed(job_id, str(e), retry_count, session_factory)
         # Return normally — quota failure is permanent, no Celery retry.
+    except _DETERMINISTIC_ERRORS as e:
+        # Deterministic failures (e.g. botocore.ParamValidationError from bad S3
+        # metadata) will never succeed on retry.  Mark the job FAILED and return
+        # normally so Celery does NOT schedule further retries.
+        err_msg = f"[deterministic_failure] {type(e).__name__}: {e}"
+        logger.error("[SONORO] deterministic_error_no_retry job_id=%s error=%s", job_id, err_msg)
+        await _mark_job_failed(job_id, err_msg, retry_count, session_factory)
+        # Return normally — no retry.
     except Exception as e:
         logger.error("[SONORO] job_error job_id=%s error=%s", job_id, str(e), exc_info=True)
         await _mark_job_failed(job_id, str(e), retry_count, session_factory)
@@ -626,8 +645,10 @@ async def _process_job_async(
                             user_id=document.user_id,
                             document_id=document.id,
                             filename=f"chapter_{i + 1}.mp3",
+                            # Only safe ASCII technical identifiers here.
+                            # Chapter titles (which may contain Unicode) are
+                            # stored exclusively in the chapters DB table.
                             metadata={
-                                "chapter_title": chapter.title,
                                 "chapter_order": str(i),
                                 "character_count": str(len(chapter_text)),
                                 "chunk_count": str(len(chunks)),

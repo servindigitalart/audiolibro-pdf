@@ -7,7 +7,7 @@ no network I/O, always succeeds.
 Sources tried (in order):
   1. PDF embedded metadata (XMP / Info dictionary: Title, Author, Subject)
   2. Filename parsing (snake_case, kebab-case, CamelCase, spaces)
-  3. First-page text: first heading-like line (large font or all-caps on first page)
+  3. First-page text: first heading-like line (large font on first page)
 
 Returns a list of ranked TitleCandidate and AuthorCandidate objects.
 """
@@ -22,15 +22,45 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# PDF embedded metadata keys (case-insensitive; PyMuPDF returns them titled)
+# ── PDF embedded metadata keys ────────────────────────────────────────────────
+
 _PDF_META_TITLE_KEYS  = ("title",)
 _PDF_META_AUTHOR_KEYS = ("author", "creator")
 
-# Tokens that suggest a filename contains author info (appear after title)
-_AUTHOR_SEPARATOR_PATTERNS = [
-    r"\s+by\s+",          # "Book Title by Author Name"
-    r"[-_]\s*",           # "Book-Title-Author-Name"
-]
+# ── Pirate / scanner publisher blocklist ─────────────────────────────────────
+#
+# Pirated ebooks stamp their own branding in the PDF Title / Author fields.
+# These values are useless (or actively harmful) as book-metadata candidates.
+# Pattern is matched against the raw string (case-insensitive, anywhere).
+
+_PIRATE_META_RE = re.compile(
+    r"iafabooks|epub\s*libre|epublibre|biblioteca\s*digital|internet\s*archive|"
+    r"epubcorrector|ebookcorrector|calibre|scannedpdfs|mobileread|"
+    r"pdfbooks|libros?\s*en\s*red|booksxx|freeditorial|"
+    r"manybooks|loyalbooks|epubmania",
+    re.IGNORECASE,
+)
+
+# Publisher-watermark pattern: "XYZ 2007: Person Name" — a known pirate stamp
+_PIRATE_STAMP_RE = re.compile(r"^\w{3,20}\s+\d{4}:\s+[A-Z]", re.ASCII)
+
+
+def _is_trustworthy_pdf_meta(value: str) -> bool:
+    """Return False when a PDF metadata value looks like a pirate/scanner watermark."""
+    if _PIRATE_META_RE.search(value):
+        return False
+    if _PIRATE_STAMP_RE.match(value):
+        return False
+    # Reject anything shorter than 3 chars (not a real title/author)
+    return len(value.strip()) >= 3
+
+
+# ── Filename patterns ─────────────────────────────────────────────────────────
+
+# Matches " by " after stem is normalized to spaces.
+# Works for: "Deep Work by Cal Newport", "deep_work_by_cal_newport",
+#            "deep-work-by-cal-newport" (all convert _ and - to spaces first).
+_BY_PATTERN = re.compile(r"\s+by\s+", re.IGNORECASE)
 
 # Minimum title length to be considered valid
 _MIN_TITLE_LEN = 3
@@ -70,7 +100,7 @@ class LocalExtractor:
         title_candidates:  list[TitleCandidate]  = []
         author_candidates: list[AuthorCandidate] = []
 
-        # 1. PDF embedded metadata (most authoritative local source)
+        # 1. PDF embedded metadata (most authoritative local source — when trusted)
         if pdf_bytes:
             tc, ac = self._from_pdf_metadata(pdf_bytes)
             title_candidates.extend(tc)
@@ -119,16 +149,21 @@ class LocalExtractor:
             doc.close()
 
             raw_title = meta.get("title", "").strip()
-            if raw_title and len(raw_title) >= _MIN_TITLE_LEN:
+            if raw_title and _is_trustworthy_pdf_meta(raw_title):
                 titles.append(TitleCandidate(
                     value=_clean_title(raw_title),
                     source="pdf_metadata",
                     weight=0.9,
                 ))
+            elif raw_title:
+                logger.debug(
+                    "[METADATA] pdf_metadata_title_rejected value=%r (pirate/watermark)",
+                    raw_title[:60],
+                )
 
             for key in _PDF_META_AUTHOR_KEYS:
                 raw_author = meta.get(key, "").strip()
-                if raw_author and len(raw_author) >= 2:
+                if raw_author and _is_trustworthy_pdf_meta(raw_author):
                     authors.append(AuthorCandidate(
                         value=_clean_author(raw_author),
                         source=f"pdf_metadata_{key}",
@@ -149,32 +184,70 @@ class LocalExtractor:
         # Strip extension
         stem = Path(filename).stem
 
-        # Try "Title by Author" pattern
-        for pat in _AUTHOR_SEPARATOR_PATTERNS:
-            parts = re.split(pat, stem, maxsplit=1, flags=re.IGNORECASE)
-            if len(parts) == 2:
-                t_raw = _normalize_filename_part(parts[0])
-                a_raw = _normalize_filename_part(parts[1])
-                if len(t_raw) >= _MIN_TITLE_LEN:
-                    titles.append(TitleCandidate(value=t_raw, source="filename_split", weight=0.7))
-                if len(a_raw) >= 2:
-                    authors.append(AuthorCandidate(value=a_raw, source="filename_split", weight=0.7))
-                break
+        # Normalize separators to spaces for pattern matching (reverting after
+        # splitting on "by" so the individual parts are still processed via
+        # _normalize_filename_part).
+        # e.g. "deep_work_by_cal_newport" → "deep work by cal newport"
+        stem_spaced = re.sub(r"[-_]", " ", stem)
 
-        # Full stem as title candidate (minus noise words)
+        # ── Strategy A: explicit " by " separator (most reliable) ──────────────
+        # Works for both: "deep work by cal newport" and "Deep Work by Cal Newport"
+        by_parts = _BY_PATTERN.split(stem_spaced, maxsplit=1)
+        if len(by_parts) == 2:
+            t_raw = _normalize_filename_part(by_parts[0])
+            a_raw = _normalize_filename_part(by_parts[1])
+            if len(t_raw) >= _MIN_TITLE_LEN:
+                titles.append(TitleCandidate(value=t_raw, source="filename_by", weight=0.85))
+            if len(a_raw) >= 2:
+                authors.append(AuthorCandidate(value=a_raw, source="filename_by", weight=0.85))
+            # Full stem as fallback title candidate even when by-split fires
+            full_title = _normalize_filename_part(stem)
+            if len(full_title) >= _MIN_TITLE_LEN:
+                titles.append(TitleCandidate(value=full_title, source="filename_full", weight=0.4))
+            return titles, authors
+
+        # ── Strategy B: "title-author" separated by a SINGLE hyphen ────────────
+        # Heuristic for common Latin-American ebook naming convention:
+        #   el_llano_en_llamas-juan_rulfo  →  "El Llano en Llamas" + "Juan Rulfo"
+        #   don_quijote-cervantes          →  "Don Quijote" + "Cervantes"
+        #
+        # Detection rule: stem contains underscores AND exactly one hyphen,
+        # and the hyphen is NOT at the start or end.
+        hyphen_count = stem.count("-")
+        has_underscores = "_" in stem
+        if has_underscores and hyphen_count == 1:
+            hyp_idx = stem.index("-")
+            if 0 < hyp_idx < len(stem) - 1:
+                before = _normalize_filename_part(stem[:hyp_idx])
+                after  = _normalize_filename_part(stem[hyp_idx + 1:])
+                if len(before) >= _MIN_TITLE_LEN:
+                    titles.append(TitleCandidate(
+                        value=before, source="filename_hyphen_split", weight=0.75,
+                    ))
+                if len(after) >= 2:
+                    authors.append(AuthorCandidate(
+                        value=after, source="filename_hyphen_split", weight=0.75,
+                    ))
+                # Also add full-stem candidate in case the split was wrong
+                full_title = _normalize_filename_part(stem)
+                if len(full_title) >= _MIN_TITLE_LEN:
+                    titles.append(TitleCandidate(
+                        value=full_title, source="filename_full", weight=0.5,
+                    ))
+                return titles, authors
+
+        # ── Strategy C: full stem as title (no author detected) ─────────────────
         full_title = _normalize_filename_part(stem)
         if len(full_title) >= _MIN_TITLE_LEN:
             titles.append(TitleCandidate(
-                value=full_title,
-                source="filename_full",
-                weight=0.6,
+                value=full_title, source="filename_full", weight=0.6,
             ))
 
         # Try extracting partial known pattern like "AtomicHabits-JamesClear"
-        # where the last word(s) could be an author surname
+        # where the last word(s) could be an author surname — but ONLY for
+        # CamelCase filenames with no underscores (they're genuinely "AuthorTitle")
         words = full_title.split()
-        if len(words) >= 4:
-            # Heuristic: last 2 words might be "Firstname Lastname"
+        if len(words) >= 4 and "_" not in stem:
             candidate_author = " ".join(words[-2:])
             candidate_title  = " ".join(words[:-2])
             if len(candidate_title) >= _MIN_TITLE_LEN and len(candidate_author) >= 4:
@@ -228,13 +301,12 @@ class LocalExtractor:
             for size, text in texts_by_size:
                 if size >= max_size * 0.85:  # within 15% of max
                     cleaned = _clean_title(text)
-                    if cleaned and cleaned.lower() not in _NOISE_WORDS:
+                    if cleaned and cleaned.lower() not in _NOISE_WORDS and _is_trustworthy_pdf_meta(cleaned):
                         title_parts.append(cleaned)
                 else:
                     break
 
             if title_parts:
-                # Join consecutive parts (up to 3) into a single title candidate
                 combined = " ".join(title_parts[:3]).strip()
                 if len(combined) >= _MIN_TITLE_LEN:
                     candidates.append(TitleCandidate(
@@ -265,7 +337,7 @@ def _normalize_filename_part(raw: str) -> str:
     # Collapse whitespace
     s = " ".join(s.split())
 
-    # Title-case
+    # Title-case, dropping noise words (but keep if only ≤2 words remain)
     words = s.split()
     clean_words = [w for w in words if w.lower() not in _NOISE_WORDS or len(words) <= 2]
     if not clean_words:
@@ -276,10 +348,8 @@ def _normalize_filename_part(raw: str) -> str:
 def _clean_title(raw: str) -> str:
     """Normalize a title string: strip noise, fix casing if all-caps."""
     t = raw.strip()
-    # Remove common junk suffixes
     t = re.sub(r"\s*\([^)]*\)\s*$", "", t)  # remove trailing (parenthetical)
     t = re.sub(r"\s*-\s*\d{4}\s*$", "", t)   # remove trailing year "- 2020"
-    # If all caps and > 3 words, apply title case
     if t == t.upper() and len(t.split()) > 2:
         t = t.title()
     return t.strip()

@@ -69,14 +69,23 @@ class MetadataService:
         filename: str,
         pdf_bytes: Optional[bytes],
         detected_language: Optional[str],
-        db: AsyncSession,
+        db_url: str,        # DB connection URL — background task opens its own session
         api_key: str = "",
     ) -> BookMetadata:
         """
         Run the full enrichment pipeline and persist results to the document row.
 
+        Accepts a *db_url* string rather than a session object so it can be
+        scheduled with asyncio.create_task() safely.  A request-scoped
+        AsyncSession would be closed by FastAPI's dependency cleanup before the
+        task finishes its HTTP calls, causing a use-after-free.
+
         Always returns a BookMetadata (never raises).
         """
+        from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession as _AS
+
+        engine = create_async_engine(db_url, pool_size=2, max_overflow=0, pool_pre_ping=True)
+        session_factory = async_sessionmaker(engine, class_=_AS, expire_on_commit=False)
         try:
             meta = await MetadataService._run_pipeline(
                 filename=filename,
@@ -93,11 +102,10 @@ class MetadataService:
                     document_id=document_id,
                 )
 
-            # Persist
-            await MetadataService._persist(meta, document_id, db)
-
-            # Analytics
-            await MetadataService._track_analytics(meta, document_id, user_id, db)
+            # Persist using a fresh session owned by this task
+            async with session_factory() as session:
+                await MetadataService._persist(meta, document_id, session)
+                await MetadataService._track_analytics(meta, document_id, user_id, session)
 
             logger.info(
                 "[METADATA] enrichment_complete document_id=%s source=%s confidence=%.2f "
@@ -112,8 +120,9 @@ class MetadataService:
                 "[METADATA] enrichment_failed document_id=%s error=%s",
                 document_id, exc,
             )
-            # Return a bare local-only result so callers have something
             return BookMetadata(source=MetadataSource.LOCAL, confidence=0.0)
+        finally:
+            await engine.dispose()
 
     # ── Pipeline steps ────────────────────────────────────────────────────────
 

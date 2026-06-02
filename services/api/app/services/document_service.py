@@ -98,23 +98,36 @@ class DocumentService:
             total_chars = 0
             sample_text = ""
             
+            # Language-sample pages: sample 5 content pages (up to 5000 chars).
+            # Page 0 often contains English copyright/publisher boilerplate —
+            # sampling multiple pages gives a far more accurate language guess.
+            _LANG_SAMPLE_PAGES = min(5, page_count)
+            _LANG_SAMPLE_MAX_CHARS = 5_000
+            lang_sample_parts: list[str] = []
+
             for page_num in range(sample_pages):
                 page = doc[page_num]
                 text = page.get_text()
                 total_chars += len(text)
-                
-                # Collect first page text for language detection
-                if page_num == 0:
-                    sample_text = text[:1000]  # First 1000 chars
-            
+
+                # Accumulate text for language detection across first N pages
+                if page_num < _LANG_SAMPLE_PAGES:
+                    stripped = text.strip()
+                    if stripped:
+                        lang_sample_parts.append(stripped)
+
             # Extrapolate character count
             if sample_pages > 0:
                 chars_per_page = total_chars / sample_pages
                 character_estimate = int(chars_per_page * page_count)
             else:
                 character_estimate = 0
-            
-            # Detect language from first page
+
+            # Build combined sample and drop leading short pages (cover/copyright)
+            # which are commonly English regardless of the book's language.
+            sample_text = " ".join(lang_sample_parts)[:_LANG_SAMPLE_MAX_CHARS]
+
+            # Detect language from multi-page sample
             language_detected = None
             if sample_text.strip():
                 try:
@@ -335,6 +348,9 @@ class DocumentService:
                     from app.metadata.service import MetadataService as _MetaSvc
                     from app.core.config import settings as _settings
 
+                    # Pass db_url (not the request-scoped session) so the
+                    # background task owns its own connection that survives
+                    # beyond the FastAPI request lifecycle.
                     _asyncio.create_task(
                         _MetaSvc.enrich(
                             document_id=document.id,
@@ -342,7 +358,7 @@ class DocumentService:
                             filename=original_filename,
                             pdf_bytes=_pdf_sample,
                             detected_language=metadata.language_detected,
-                            db=self.db,
+                            db_url=str(_settings.database_async_url),
                             api_key=getattr(_settings, "google_books_api_key", ""),
                         )
                     )

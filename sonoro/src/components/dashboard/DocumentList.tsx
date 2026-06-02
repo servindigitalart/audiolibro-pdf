@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import type { Document } from '@/lib/api/types';
 import {
   deleteDocument, retryProcessing, cancelDocument,
-  renameDocumentTitle, getErrorMessage,
+  renameDocumentTitle, getProcessingJob, getErrorMessage,
 } from '@/lib/api/client';
 import { track } from '@/lib/analytics';
 import { getAllProgress } from '@/hooks/usePlaybackProgress';
@@ -10,6 +10,53 @@ import type { PlaybackProgress } from '@/hooks/usePlaybackProgress';
 import { fmtRelative, fmtFileSize } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import BookCover from '@/components/ui/BookCover';
+
+/**
+ * Polls /documents/{id}/job every 3 s while the job is active and surfaces
+ * a live percentage badge.  Stops automatically on completion / failure.
+ * Intended to show progress after a Library retry — the UploadZone is not
+ * re-entered in that flow so there's nowhere else to display it.
+ */
+function LiveProgressBadge({ documentId }: { documentId: string }) {
+  const [pct, setPct] = useState<number | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let stopped = false;
+    const id = setInterval(async () => {
+      if (stopped) return;
+      try {
+        const job = await getProcessingJob(documentId);
+        if (!job) return;
+        if (job.status === 'processing' || job.status === 'queued') {
+          setPct(typeof job.progress === 'number' ? job.progress : null);
+        } else if (job.status === 'completed') {
+          clearInterval(id);
+          stopped = true;
+          window.location.reload(); // refresh card to show "Ready"
+        } else if (job.status === 'failed') {
+          clearInterval(id);
+          stopped = true;
+          setFailed(true);
+          setPct(null);
+        }
+      } catch {
+        // non-fatal — just skip this tick
+      }
+    }, 3000);
+    return () => { stopped = true; clearInterval(id); };
+  }, [documentId]);
+
+  if (failed) return (
+    <span className="text-[10px] font-medium text-red-500 tabular-nums">Failed</span>
+  );
+  if (pct === null) return (
+    <span className="text-[10px] text-sonoro-400 animate-pulse">Queued…</span>
+  );
+  return (
+    <span className="text-[10px] font-medium text-sonoro-amber-dark tabular-nums">{pct}%</span>
+  );
+}
 
 // Stuck threshold: pending job older than 10 minutes is considered stuck
 const STUCK_MS = 10 * 60 * 1000;
@@ -61,6 +108,8 @@ export default function DocumentList({ initialDocuments }: Props) {
   const [deleting, setDeleting]       = useState<string | null>(null);
   const [retrying, setRetrying]       = useState<string | null>(null);
   const [cancelling, setCancelling]   = useState<string | null>(null);
+  // IDs that were retried in this session — show LiveProgressBadge for them
+  const [monitoring, setMonitoring]   = useState<Set<string>>(new Set());
   const [editingTitle, setEditingTitle] = useState<string | null>(null);
   const [editValue, setEditValue]       = useState('');
   const [savingTitle, setSavingTitle]   = useState<string | null>(null);
@@ -100,6 +149,9 @@ export default function DocumentList({ initialDocuments }: Props) {
     try {
       await retryProcessing(id);
       setDocs(prev => prev.map(d => d.id === id ? { ...d, status: 'pending', updated_at: new Date().toISOString() } : d));
+      // Start polling this job for live progress — the UploadZone is not re-entered
+      // after a Library retry, so we show the badge directly in the card.
+      setMonitoring(prev => new Set(prev).add(id));
       track(stuck ? 'stuck_job_retried' : 'audiobook_started', { document_id: id });
     } catch (err) {
       alert(getErrorMessage(err));
@@ -270,10 +322,15 @@ export default function DocumentList({ initialDocuments }: Props) {
                 </div>
               )}
 
-              {/* Processing indeterminate bar */}
+              {/* Processing indeterminate bar + live progress badge after retry */}
               {isActive && (
-                <div className="mt-2 h-0.5 w-24 rounded-full bg-sonoro-border overflow-hidden">
-                  <div className="h-full rounded-full bg-sonoro-amber animate-shimmer" style={{ backgroundSize: '200% 100%', background: 'linear-gradient(90deg, transparent 0%, #F59E0B 50%, transparent 100%)' }} />
+                <div className="mt-2 flex items-center gap-2">
+                  <div className="h-0.5 w-24 rounded-full bg-sonoro-border overflow-hidden">
+                    <div className="h-full rounded-full bg-sonoro-amber animate-shimmer" style={{ backgroundSize: '200% 100%', background: 'linear-gradient(90deg, transparent 0%, #F59E0B 50%, transparent 100%)' }} />
+                  </div>
+                  {monitoring.has(doc.id) && (
+                    <LiveProgressBadge documentId={doc.id} />
+                  )}
                 </div>
               )}
             </div>
