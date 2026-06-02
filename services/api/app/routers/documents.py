@@ -477,6 +477,49 @@ async def delete_document(
 
 
 # ============================================
+# TITLE RENAME ENDPOINT
+# ============================================
+
+from pydantic import BaseModel as _PydanticBase
+
+class DocumentTitleRequest(_PydanticBase):
+    display_title: str
+
+
+@router.patch(
+    "/{document_id}/title",
+    summary="Rename Audiobook Title",
+    description="Update the user-facing display title of a document (does not change the original filename).",
+)
+async def rename_document_title(
+    document_id: UUID,
+    body: DocumentTitleRequest,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    from app.db.models.document import Document as _DocModel
+
+    doc_result = await db.execute(
+        select(_DocModel).where(
+            _DocModel.id == document_id,
+            _DocModel.user_id == current_user.id,
+        )
+    )
+    doc = doc_result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    title = body.display_title.strip()
+    if not title:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Title cannot be empty")
+
+    doc.display_title = title
+    await db.commit()
+    logger.info("[SONORO] document_renamed document_id=%s user_id=%s", document_id, current_user.id)
+    return {"id": str(document_id), "display_title": doc.display_title}
+
+
+# ============================================
 # START PROCESSING ENDPOINT
 # ============================================
 
@@ -526,6 +569,63 @@ async def start_document_processing(
     logger.info(
         "[SONORO] processing_job_enqueued_via_start document_id=%s user_id=%s job_id=%s",
         document_id, current_user.id, job.id,
+    )
+    return {"job_id": str(job.id), "status": "queued"}
+
+
+# ============================================
+# RETRY ENDPOINT
+# ============================================
+
+@router.post(
+    "/{document_id}/retry",
+    status_code=status.HTTP_201_CREATED,
+    summary="Retry Failed Document",
+    description="Create a new processing job for a previously failed document.",
+)
+async def retry_document_processing(
+    document_id: UUID,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Retry processing for a failed document.
+
+    Resets failed state so create_processing_job can enqueue a fresh job.
+    Safe to call on any document owned by the user that has a failed job —
+    idempotent when the document is already in a terminal-but-clean state.
+    """
+    from app.db.models.document import Document as _DocModel
+
+    doc_result = await db.execute(
+        select(_DocModel).where(
+            _DocModel.id == document_id,
+            _DocModel.user_id == current_user.id,
+        )
+    )
+    doc = doc_result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    # Reset failed processing state so _validate_document / _check_document_not_processing pass.
+    if doc.processing_status == ProcessingStatus.FAILED:
+        doc.processing_status = ProcessingStatus.NOT_STARTED
+        doc.error_message = None
+        await db.commit()
+
+    logger.info(
+        "[SONORO] retry_requested document_id=%s user_id=%s",
+        document_id, current_user.id,
+    )
+
+    processing_service = ProcessingService(db)
+    job = await processing_service.create_processing_job(
+        document_id=document_id,
+        user=current_user,
+        request=ProcessDocumentRequest(),
+    )
+    logger.info(
+        "[SONORO] retry_job_enqueued document_id=%s job_id=%s",
+        document_id, job.id,
     )
     return {"job_id": str(job.id), "status": "queued"}
 

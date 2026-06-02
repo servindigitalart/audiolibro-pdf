@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { Document } from '@/lib/api/types';
-import { deleteDocument, retryProcessing, getErrorMessage } from '@/lib/api/client';
+import { deleteDocument, retryProcessing, renameDocumentTitle, getErrorMessage } from '@/lib/api/client';
 import { getAllProgress } from '@/hooks/usePlaybackProgress';
 import type { PlaybackProgress } from '@/hooks/usePlaybackProgress';
 import { fmtRelative, fmtFileSize, fmtDuration } from '@/lib/utils';
@@ -31,6 +31,10 @@ export default function DocumentList({ initialDocuments }: Props) {
   const [docs, setDocs]         = useState<Document[]>(initialDocuments);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [retrying, setRetrying] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState<string | null>(null);
+  const [editValue, setEditValue]       = useState('');
+  const [savingTitle, setSavingTitle]   = useState<string | null>(null);
+  const titleInputRef = useRef<HTMLInputElement>(null);
   const [progressMap, setProgressMap] = useState<Record<string, PlaybackProgress>>({});
 
   // Load playback progress from localStorage (client-only)
@@ -63,6 +67,28 @@ export default function DocumentList({ initialDocuments }: Props) {
       alert(getErrorMessage(err));
     } finally {
       setRetrying(null);
+    }
+  }
+
+  function startRename(doc: Document) {
+    setEditingTitle(doc.id);
+    setEditValue(doc.title);
+    // Focus after render
+    requestAnimationFrame(() => titleInputRef.current?.select());
+  }
+
+  async function commitRename(id: string) {
+    const trimmed = editValue.trim();
+    if (!trimmed) { setEditingTitle(null); return; }
+    setSavingTitle(id);
+    try {
+      await renameDocumentTitle(id, trimmed);
+      setDocs(prev => prev.map(d => d.id === id ? { ...d, title: trimmed, display_title: trimmed } : d));
+    } catch (err) {
+      alert(getErrorMessage(err));
+    } finally {
+      setSavingTitle(null);
+      setEditingTitle(null);
     }
   }
 
@@ -112,7 +138,7 @@ export default function DocumentList({ initialDocuments }: Props) {
           <div
             key={doc.id}
             className={cn(
-              'group card-base flex items-center gap-4 px-5 py-4 transition-all duration-200',
+              'group card-base flex items-center gap-3 px-4 py-3.5 sm:px-5 sm:py-4 transition-all duration-200',
               isCompleted && 'hover:shadow-hover hover:-translate-y-px',
             )}
             style={{ animationDelay: `${listIdx * 40}ms` }}
@@ -125,7 +151,30 @@ export default function DocumentList({ initialDocuments }: Props) {
             {/* Document info */}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-                <p className="text-sm font-semibold text-sonoro-900 truncate leading-snug">{title}</p>
+                {editingTitle === doc.id ? (
+                  <input
+                    ref={titleInputRef}
+                    value={editValue}
+                    onChange={e => setEditValue(e.target.value)}
+                    onBlur={() => commitRename(doc.id)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') commitRename(doc.id);
+                      if (e.key === 'Escape') setEditingTitle(null);
+                    }}
+                    className="text-sm font-semibold text-sonoro-900 bg-sonoro-surface border border-sonoro-amber rounded px-1.5 py-0.5 leading-snug min-w-0 flex-1 focus:outline-none"
+                    aria-label="Edit audiobook title"
+                    disabled={savingTitle === doc.id}
+                  />
+                ) : (
+                  <button
+                    onClick={() => startRename(doc)}
+                    className="text-sm font-semibold text-sonoro-900 truncate leading-snug hover:text-sonoro-amber-dark transition-colors text-left"
+                    title="Click to rename"
+                    aria-label={`Rename: ${title}`}
+                  >
+                    {title}
+                  </button>
+                )}
                 <span className={s.cls}>
                   <span className={cn('h-1.5 w-1.5 rounded-full', s.dot, isActive && 'animate-pulse')} aria-hidden="true" />
                   {s.label}
@@ -167,8 +216,8 @@ export default function DocumentList({ initialDocuments }: Props) {
               )}
             </div>
 
-            {/* Row actions — revealed on hover */}
-            <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+            {/* Row actions — always visible on mobile, revealed on hover on desktop */}
+            <div className="flex items-center gap-1 shrink-0 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity duration-150">
               {isCompleted && (
                 <a
                   href={listenHref}

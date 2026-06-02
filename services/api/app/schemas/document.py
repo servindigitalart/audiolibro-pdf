@@ -99,10 +99,11 @@ class DocumentUploadResponse(BaseModel):
 
 class DocumentListItem(BaseModel):
     """Document list item with essential metadata."""
-    
+
     id: UUID
     filename: str
     original_filename: str
+    display_title: Optional[str] = None
     file_size_bytes: int
     file_size_mb: float
     mime_type: str
@@ -155,11 +156,12 @@ class DocumentListResponse(BaseModel):
 
 class DocumentDetail(BaseModel):
     """Complete document details including all metadata and timestamps."""
-    
+
     id: UUID
     user_id: UUID
     filename: str
     original_filename: str
+    display_title: Optional[str] = None
     file_size_bytes: int
     file_size_mb: float
     mime_type: str

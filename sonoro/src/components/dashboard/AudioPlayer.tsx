@@ -42,6 +42,78 @@ function getAmbient(title: string) {
   return AMBIENT_PALETTES[hashString(title) % AMBIENT_PALETTES.length];
 }
 
+// Generate a square cover art data URL for the Media Session API.
+// Returns a 512×512 canvas PNG with the same gradient + initials as BookCover.
+// Sizes are generated on demand from this single canvas to avoid 6 redraws.
+const COVER_PALETTES = [
+  { from: '#D97706', to: '#92400E', text: '#FFF8E7' },
+  { from: '#1D4ED8', to: '#1E3A5F', text: '#EFF6FF' },
+  { from: '#059669', to: '#064E3B', text: '#ECFDF5' },
+  { from: '#7C3AED', to: '#3B0764', text: '#F5F3FF' },
+  { from: '#DB2777', to: '#831843', text: '#FDF2F8' },
+  { from: '#0891B2', to: '#164E63', text: '#ECFEFF' },
+  { from: '#4F46E5', to: '#1E1B4B', text: '#EEF2FF' },
+  { from: '#B45309', to: '#78350F', text: '#FFFBEB' },
+  { from: '#0F766E', to: '#042F2E', text: '#F0FDFA' },
+  { from: '#6D28D9', to: '#2E1065', text: '#FAF5FF' },
+];
+
+function generateCoverDataUrl(title: string, size = 512): string {
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width  = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return '';
+
+    const h       = hashString(title);
+    const palette = COVER_PALETTES[h % COVER_PALETTES.length];
+
+    // Background gradient
+    const grad = ctx.createLinearGradient(0, 0, size, size);
+    grad.addColorStop(0, palette.from);
+    grad.addColorStop(1, palette.to);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+
+    // Subtle diagonal stripe overlay
+    ctx.save();
+    ctx.globalAlpha = 0.07;
+    ctx.strokeStyle = palette.text;
+    ctx.lineWidth   = size / 256;
+    const angle = 30 + (h % 5) * 18;
+    const rad   = (angle * Math.PI) / 180;
+    const step  = size / 36;
+    for (let i = -size; i < size * 2; i += step) {
+      ctx.beginPath();
+      ctx.moveTo(i * Math.cos(rad), i * Math.sin(rad));
+      ctx.lineTo(i * Math.cos(rad) + size * 2, i * Math.sin(rad) + size * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // Initials / short title
+    const words   = title.trim().split(/\s+/).filter(Boolean);
+    const initials = words.slice(0, 2).map(w => w[0].toUpperCase()).join('');
+    const fontSize = Math.round(size * 0.28);
+    ctx.globalAlpha  = 1;
+    ctx.fillStyle    = palette.text;
+    ctx.font         = `bold ${fontSize}px -apple-system, system-ui, sans-serif`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(initials, size / 2, size / 2);
+
+    // Bottom spine accent
+    ctx.globalAlpha  = 0.2;
+    ctx.fillStyle    = palette.text;
+    ctx.fillRect(0, size - size * 0.015, size, size * 0.015);
+
+    return canvas.toDataURL('image/png');
+  } catch {
+    return '';
+  }
+}
+
 interface Props {
   chapters:      Chapter[];
   documentTitle: string;
@@ -836,10 +908,22 @@ export default function AudioPlayer({ chapters, documentTitle, documentId = '', 
   // Update metadata whenever the chapter changes
   useEffect(() => {
     if (!('mediaSession' in navigator)) return;
+    // Generate a square cover and produce the required sizes from the same source image.
+    // We generate at 512px (cheapest canvas size that looks sharp on all lock screens)
+    // and declare all sizes — the OS picks its preferred one.
+    const coverDataUrl = generateCoverDataUrl(documentTitle, 512);
+    const artwork: MediaImage[] = coverDataUrl
+      ? [96, 128, 192, 256, 512].map(sz => ({
+          src:   coverDataUrl,
+          sizes: `${sz}x${sz}`,
+          type:  'image/png',
+        }))
+      : [];
     navigator.mediaSession.metadata = new MediaMetadata({
       title:  chapter?.title ?? documentTitle,
       artist: documentTitle,
       album:  'Sonoro',
+      artwork,
     });
   }, [currentIdx, documentTitle]); // eslint-disable-line react-hooks/exhaustive-deps
 

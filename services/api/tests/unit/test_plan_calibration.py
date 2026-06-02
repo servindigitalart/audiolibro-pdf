@@ -66,7 +66,7 @@ def test_tier_ordering_listening_hours():
 def test_free_tier_listening_hours_range():
     config = get_tier(PlanTier.FREE)
     assert config.approx_listening_hours_min >= 0.1
-    assert config.approx_listening_hours_max <= 1.0
+    assert config.approx_listening_hours_max <= 1.5
 
 
 def test_basic_tier_listening_hours_range():

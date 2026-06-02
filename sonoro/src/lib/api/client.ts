@@ -229,6 +229,11 @@ export async function retryProcessing(documentId: string) {
   return data;
 }
 
+export async function renameDocumentTitle(documentId: string, displayTitle: string) {
+  const { data } = await api.patch(`/documents/${documentId}/title`, { display_title: displayTitle });
+  return data as { id: string; display_title: string };
+}
+
 export async function getChapters(documentId: string) {
   const { data } = await api.get(`/documents/${documentId}/chapters`);
   return data;

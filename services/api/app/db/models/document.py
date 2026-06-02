@@ -97,6 +97,11 @@ class Document(Base):
         nullable=False,
         comment="Original filename from upload"
     )
+    display_title = Column(
+        String(512),
+        nullable=True,
+        comment="User-editable title shown in the UI; falls back to original_filename when NULL"
+    )
     file_size_bytes = Column(
         BigInteger,
         nullable=False,

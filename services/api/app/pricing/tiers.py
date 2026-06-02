@@ -125,23 +125,23 @@ TIER_CATALOG: dict[PlanTier, TierConfig] = {
         stripe_monthly_price_setting="",
         stripe_annual_price_setting="",
 
-        monthly_chars=30_000,           # ~12 pages of text
+        monthly_chars=50_000,           # ~20 pages — enough for one meaningful trial audiobook
         monthly_jobs=5,
         concurrent_jobs=1,
         storage_mb=100,
         daily_api_calls=100,
         api_calls_per_minute=10,
 
-        # Cost cap: at $0.000016/char × 30K + infra → max realistic $0.50/month
-        max_daily_cost_usd=0.06,        # ~$1.80/month if saturated every day
-        max_monthly_cost_usd=0.50,      # absolute monthly ceiling
+        # Cost cap: at $0.000016/char × 50K + infra → max realistic $0.80/month
+        max_daily_cost_usd=0.09,        # ~$2.70/month if saturated every day
+        max_monthly_cost_usd=0.80,      # absolute monthly ceiling
 
         warn_usage_pct=0.80,
         block_usage_pct=1.00,
 
-        # 30K chars / 50K chars-per-hr = 0.6h theoretical; conservative 0.3–0.6h
-        approx_listening_hours_min=0.3,
-        approx_listening_hours_max=0.6,
+        # 50K chars / 50K chars-per-hr = 1.0h theoretical; conservative 0.5–0.9h
+        approx_listening_hours_min=0.5,
+        approx_listening_hours_max=0.9,
 
         features=frozenset({
             TierFeature.DOCUMENT_UPLOAD,

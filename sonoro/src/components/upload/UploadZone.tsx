@@ -81,7 +81,7 @@ function resolveMicrocopy(
   // 1-based: "done" = completed chunks, so current = done + 1
   const chunkDesc =
     chunks && chunks.total > 0
-      ? `Chapter ${chunks.done + 1} of ${chunks.total}`
+      ? `Part ${chunks.done + 1} of ${chunks.total}`
       : 'Generating your narration';
 
   if (r === 'analyzing')           return { label: 'Analyzing document',    desc: 'Reading structure and extracting text' };
@@ -191,9 +191,9 @@ function MicroProgress({ done, total }: { done: number; total: number }) {
             type === 'active'  ? 'text-sonoro-900 font-medium'  :
                                  'text-sonoro-400',
           )}>
-            {type === 'done'   ? `Chapter ${n} complete`   :
-             type === 'active' ? `Generating chapter ${n}` :
-                                 `Chapter ${n} pending`}
+            {type === 'done'   ? `Part ${n} complete`   :
+             type === 'active' ? `Generating part ${n}` :
+                                 `Part ${n} pending`}
           </span>
         </div>
       ))}
@@ -230,6 +230,11 @@ export default function UploadZone() {
   const [stuckMessage, setStuckMessage]               = useState<string | null>(null);
   const [showingCompletion, setShowingCompletion]     = useState(false);
   const [failedChunks, setFailedChunks]               = useState<{ done: number; total: number } | null>(null);
+  // Smooth display percentage — interpolated toward the backend-confirmed target
+  const [displayPct, setDisplayPct]                   = useState(0);
+  const targetPctRef    = useRef(0);
+  const displayPctRef   = useRef(0);
+  const rafRef          = useRef<number | null>(null);
   const pollRef         = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastProgressRef = useRef<{ pct: number; time: number }>({ pct: -1, time: Date.now() });
   const prevStageRef    = useRef<string>('');
@@ -267,6 +272,14 @@ export default function UploadZone() {
         }
         return next;
       });
+
+      // Update interpolation target (weighted, monotonic)
+      const newStageRaw = job.current_stage ?? '';
+      const chks = job.total_chunks && job.total_chunks > 0
+        ? { done: job.completed_chunks ?? 0, total: job.total_chunks }
+        : null;
+      const newWeighted = weightedProgress(newStageRaw, job.stage, newPct, chks);
+      targetPctRef.current = Math.max(targetPctRef.current, newWeighted);
 
       if (job.total_chunks && job.total_chunks > 0) {
         setChunkProgress({ done: job.completed_chunks ?? 0, total: job.total_chunks });
@@ -333,11 +346,36 @@ export default function UploadZone() {
       const { pct, time } = lastProgressRef.current;
       if (pct > 0 && pct < 95 && Date.now() - time > 60_000) {
         setStuckMessage(
-          'This chapter is taking longer than usual. Your audiobook is still being generated.'
+          'This part is taking longer than usual. Your audiobook is still being generated.'
         );
       }
     }, 5_000);
     return () => clearInterval(id);
+  }, [stage]);
+
+  // Smooth interpolation: animate displayPct toward the backend-confirmed target.
+  // Uses rAF for fluid 60fps updates; progress is strictly monotonic (never goes back).
+  // Speed: ~1.5 pp/frame at 60fps = ~90pp/sec — reaches a 60pp jump in <1 s.
+  useEffect(() => {
+    if (stage !== 'processing') {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      return;
+    }
+
+    function tick() {
+      const target  = targetPctRef.current;
+      const current = displayPctRef.current;
+      // Clamp advance: at most 1.5pp/frame (≈90pp/s) so it looks animated, not instant
+      const delta   = Math.min(target - current, 1.5);
+      if (delta > 0.05) {
+        const next = current + delta;
+        displayPctRef.current = next;
+        setDisplayPct(Math.round(next * 10) / 10);
+      }
+      rafRef.current = requestAnimationFrame(tick);
+    }
+    rafRef.current = requestAnimationFrame(tick);
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
   }, [stage]);
 
   // ── Upload handler ─────────────────────────────────────────────────────────
@@ -418,6 +456,9 @@ export default function UploadZone() {
     setFailedChunks(null);
     lastProgressRef.current = { pct: -1, time: Date.now() };
     prevStageRef.current    = '';
+    targetPctRef.current    = 0;
+    displayPctRef.current   = 0;
+    setDisplayPct(0);
   }
 
   // ── Preflight ──────────────────────────────────────────────────────────────
@@ -908,7 +949,9 @@ export default function UploadZone() {
     const visualIdx    = resolveVisualStep(rawStage, processStage);
     const copy         = resolveMicrocopy(rawStage, processStage, chunkProgress);
     const weightedPct  = weightedProgress(rawStage, processStage, processPct, chunkProgress);
-    const thresholdMsg = stageThresholdMessage(weightedPct);
+    // displayPct interpolates smoothly toward weightedPct — use for the visual bar
+    const smoothPct    = Math.min(Math.max(displayPct, 0), 99); // cap at 99 until backend confirms done
+    const thresholdMsg = stageThresholdMessage(smoothPct);
     const r            = (rawStage || '').toLowerCase();
     const isGenStage   = r.startsWith('tts') || r === 'generating_audio' || processStage === 'generating_audio';
 
@@ -964,24 +1007,25 @@ export default function UploadZone() {
                 </p>
               )}
 
-              {/* Progress bar — uses weighted percentage */}
+              {/* Progress bar — smoothPct interpolates toward backend-confirmed weightedPct */}
               <div
                 className="relative h-1.5 w-full max-w-xs mx-auto rounded-full bg-sonoro-border overflow-hidden mb-2"
                 role="progressbar"
                 aria-valuenow={weightedPct}
                 aria-valuemin={0}
                 aria-valuemax={100}
-                aria-label={`${weightedPct}% complete`}
+                aria-label={`${Math.round(smoothPct)}% complete`}
               >
                 <div
-                  className="absolute inset-y-0 left-0 rounded-full transition-all duration-700 ease-out"
+                  className="absolute inset-y-0 left-0 rounded-full"
                   style={{
-                    width: `${weightedPct}%`,
+                    width: `${smoothPct}%`,
                     background: 'linear-gradient(90deg, #D97706, #F59E0B)',
+                    transition: 'width 0.08s linear',
                   }}
                 />
               </div>
-              <p className="text-xs text-sonoro-400 tabular-nums mb-8">{weightedPct}%</p>
+              <p className="text-xs text-sonoro-400 tabular-nums mb-8">{Math.round(smoothPct)}%</p>
             </>
           )}
 

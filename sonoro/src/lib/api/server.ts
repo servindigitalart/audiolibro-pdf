@@ -61,7 +61,8 @@ function normalizeDocument(raw: RawDocument): Document {
 
   return {
     id:           String(raw.id ?? ''),
-    title:        String(raw.original_filename ?? raw.filename ?? 'Untitled'),
+    title:        String(raw.display_title ?? raw.original_filename ?? raw.filename ?? 'Untitled'),
+    display_title: raw.display_title ? String(raw.display_title) : undefined,
     filename:     String(raw.filename ?? ''),
     file_size:    Number(raw.file_size_bytes ?? raw.file_size ?? 0),
     status:       deriveStatus(processingStatus, uploadStatus),

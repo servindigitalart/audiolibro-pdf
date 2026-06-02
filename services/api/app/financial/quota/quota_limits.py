@@ -60,7 +60,7 @@ class QuotaLimits:
 # Plan Tier Configurations
 PLAN_QUOTAS = {
     PlanTier.FREE: QuotaLimits(
-        monthly_char_limit=30_000,  # ~12 pages
+        monthly_char_limit=50_000,  # ~20 pages — one meaningful trial audiobook
         monthly_job_limit=5,
         concurrent_job_limit=1,
         storage_limit_mb=100,  # 100MB

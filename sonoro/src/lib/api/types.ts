@@ -19,7 +19,10 @@ export interface AuthTokens {
 
 export interface Document {
   id: string;
+  /** User-editable display title — set from display_title ?? original_filename */
   title: string;
+  /** The raw user-set display title (undefined if never renamed) */
+  display_title?: string;
   filename: string;
   file_size: number;
   status: 'pending' | 'processing' | 'completed' | 'failed';
