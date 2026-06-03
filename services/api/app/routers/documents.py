@@ -1116,12 +1116,15 @@ async def get_document_chapters(
             "id": str(chapter.id),
             "document_id": str(chapter.document_id),
             "chapter_number": chapter.order_index + 1,
+            "order_index": chapter.order_index,
             "title": chapter.title,
             "start_page": chapter.start_page,
             "end_page": chapter.end_page,
             "confidence_score": chapter.confidence_score,
+            "detection_method": getattr(chapter, "detection_method", None),
             "audio_url": audio_url,
-            "duration_seconds": None,
+            "duration_seconds": getattr(chapter, "duration_seconds", None),
+            "start_time_seconds": getattr(chapter, "start_time_seconds", None),
             "status": ch_status,
         })
 

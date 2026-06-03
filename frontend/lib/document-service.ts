@@ -13,7 +13,7 @@ export interface Document {
   title: string;
   filename: string;
   file_size: number;
-  status: 'pending' | 'processing' | 'completed' | 'failed';
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
   upload_date: string;
   completed_date?: string;
   error_message?: string;
@@ -29,9 +29,13 @@ export interface Document {
 export interface ProcessingJob {
   id: string;
   document_id: string;
-  status: 'queued' | 'processing' | 'completed' | 'failed';
+  status: 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
   stage?: 'analyzing' | 'detecting_chapters' | 'generating_audio' | 'finalizing';
+  current_stage?: string;
   progress: number;
+  completed_chunks: number;
+  total_chunks: number;
+  estimated_seconds_remaining?: number;
   started_at?: string;
   completed_at?: string;
   error_message?: string;
@@ -41,6 +45,8 @@ export interface ProcessingJob {
     total_chapters?: number;
     processed_chapters?: number;
     current_chapter?: string;
+    job_type?: string;
+    retry_count?: number;
   };
 }
 
@@ -48,12 +54,15 @@ export interface Chapter {
   id: string;
   document_id: string;
   chapter_number: number;
+  order_index: number;
   title: string;
   start_page: number;
   end_page: number;
   confidence_score: number;
+  detection_method?: string;
   audio_url?: string;
   duration_seconds?: number;
+  start_time_seconds?: number;
   status: 'pending' | 'processing' | 'completed' | 'failed';
 }
 
@@ -134,6 +143,13 @@ export async function getProcessingJob(documentId: string): Promise<ProcessingJo
 export async function retryProcessing(documentId: string): Promise<ProcessingJob> {
   const response = await apiClient.post(`/documents/${documentId}/retry`);
   return response.data;
+}
+
+/**
+ * Cancel active processing for a document
+ */
+export async function cancelProcessing(documentId: string): Promise<void> {
+  await apiClient.post(`/documents/${documentId}/cancel`);
 }
 
 /**

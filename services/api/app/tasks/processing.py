@@ -39,6 +39,22 @@ from app.financial.quota.quota_service import QuotaExhaustedError as _QuotaExhau
 
 logger = logging.getLogger(__name__)
 
+
+class _JobCancelledError(Exception):
+    """Raised when the worker detects a cancellation request in the DB."""
+
+
+async def _check_cancelled(job_id: UUID, session) -> None:
+    """Re-query the job; raise _JobCancelledError if it was cancelled via the API."""
+    result = await session.execute(
+        select(ProcessingJob).where(ProcessingJob.id == job_id)
+    )
+    job = result.scalar_one_or_none()
+    if job and job.status == JobStatus.CANCELLED:
+        logger.info("[SONORO] cancellation_detected job_id=%s — stopping worker", job_id)
+        raise _JobCancelledError(f"Job {job_id} was cancelled")
+
+
 # Exceptions that are deterministic (same inputs → same failure every time).
 # Retrying these wastes quota and delays error surfacing.  When _dispatch_job
 # raises one of these, it is caught BEFORE the generic re-raise so Celery
@@ -246,6 +262,10 @@ async def _dispatch_job(job_id: UUID, task_id: str, retry_count: int) -> None:
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     try:
         await _process_job_async(job_id, task_id, retry_count, session_factory)
+    except _JobCancelledError:
+        # API already updated DB; worker just exits cleanly.
+        logger.info("[SONORO] job_cancelled_exit job_id=%s", job_id)
+        return
     except _QuotaExhaustedError as e:
         logger.warning(
             "[SONORO] quota_exhausted_no_retry job_id=%s error=%s", job_id, str(e)
@@ -353,6 +373,9 @@ async def _process_job_async(
             # and the worker reads it.  With STORAGE_BACKEND=local the two containers
             # have separate filesystems, so the file would not be found.
             storage_service = get_storage_service()
+
+            # ── Cancellation check before analysis ───────────────────────────
+            await _check_cancelled(job_id, session)
 
             # ============================================
             # STEP 1: Analyze Document Structure (BLOCK 6B)
@@ -530,6 +553,7 @@ async def _process_job_async(
             await session.commit()
 
             _completed_chunks = 0
+            _cumulative_start = 0.0  # tracks start_time_seconds for each chapter
 
             def _tts_progress(completed: int, total: int) -> int:
                 """Map completed/total chunks to 25–90% range."""
@@ -550,6 +574,7 @@ async def _process_job_async(
                     )
                     chunk_paths = []
                     for j, chunk in enumerate(fallback_chunks):
+                        await _check_cancelled(job_id, session)
                         audio_bytes = await tts_service.synthesize_text(
                             db=session,
                             user_id=document.user_id,
@@ -605,6 +630,7 @@ async def _process_job_async(
 
                         chunk_paths = []
                         for j, chunk in enumerate(chunks):
+                            await _check_cancelled(job_id, session)
                             audio_bytes = await tts_service.synthesize_text(
                                 db=session,
                                 user_id=document.user_id,
@@ -661,7 +687,7 @@ async def _process_job_async(
                             chapter_label, s3_path,
                         )
 
-                        # Persist audio S3 key to Chapter row so the frontend can play it
+                        # Persist audio S3 key + duration to Chapter row
                         ch_result = await session.execute(
                             select(ChapterModel).where(
                                 ChapterModel.document_id == document.id,
@@ -671,11 +697,24 @@ async def _process_job_async(
                         db_ch = ch_result.scalar_one_or_none()
                         if db_ch:
                             db_ch.audio_url = s3_path
+                            try:
+                                ch_dur = float(MutagenMP3(chapter_path).info.length)
+                                db_ch.duration_seconds = ch_dur
+                                db_ch.start_time_seconds = _cumulative_start
+                                _cumulative_start += ch_dur
+                            except Exception as _dur_err:
+                                logger.warning(
+                                    "[SONORO] chapter_duration_read_failed order=%d err=%s",
+                                    i, _dur_err,
+                                )
                             logger.info(
                                 "[SONORO] chapter_audio_path_persisted order=%d chapter_db_id=%s",
                                 i, db_ch.id,
                             )
                         await session.commit()
+
+                # ── Cancellation check before assembly ───────────────────────
+                await _check_cancelled(job_id, session)
 
                 job.current_stage = 'final_assembly'
                 job.progress_percentage = 90
@@ -855,6 +894,10 @@ async def _process_job_async(
                 _profile.name,
             )
             
+        except _JobCancelledError:
+            # Let the outer _dispatch_job handler deal with it cleanly.
+            await session.rollback()
+            raise
         except Exception as e:
             await session.rollback()
             raise

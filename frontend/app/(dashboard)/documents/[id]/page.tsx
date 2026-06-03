@@ -1,20 +1,19 @@
 /**
  * Document Detail Page
  * ===================
- * Premium audiobook experience with player, chapters, and processing status
+ * Premium audiobook experience with player, chapters, and processing status.
  */
 
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'next/navigation';
-import { 
-  getDocument, 
-  getProcessingJob, 
+import {
+  getDocument,
   getChapters,
   downloadAudiobook,
   triggerDownload,
-  retryProcessing
+  retryProcessing,
 } from '@/lib/document-service';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -24,20 +23,21 @@ import { AudioPlayer } from '@/components/player/audio-player';
 import { ChapterNavigation } from '@/components/player/chapter-navigation';
 import { ProcessingTimeline } from '@/components/player/processing-timeline';
 import { Skeleton } from '@/components/ui/skeleton';
-import { 
-  ArrowLeft, 
-  Download, 
-  RefreshCw, 
-  FileText, 
+import {
+  ArrowLeft,
+  Download,
+  RefreshCw,
+  FileText,
   Calendar,
   HardDrive,
   BookOpen,
   Clock,
-  AlertCircle
+  AlertCircle,
 } from 'lucide-react';
 import Link from 'next/link';
 import { isProcessing, canDownload, canRetry } from '@/lib/document-status';
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
+import { track } from '@/lib/analytics';
 
 export default function DocumentDetailPage() {
   const params = useParams();
@@ -45,8 +45,9 @@ export default function DocumentDetailPage() {
   const [isRetrying, setIsRetrying] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [currentChapter, setCurrentChapter] = useState<number | null>(null);
+  const [wasCancelled, setWasCancelled] = useState(false);
 
-  // Fetch document with conditional polling
+  // Fetch document (polling while processing)
   const { data: document, isLoading: isLoadingDoc, error: docError, refetch: refetchDoc } = useQuery({
     queryKey: ['document', documentId],
     queryFn: () => getDocument(documentId),
@@ -57,20 +58,19 @@ export default function DocumentDetailPage() {
     },
   });
 
-  // Fetch processing job (with polling if processing)
-  const { data: job, refetch: refetchJob } = useQuery({
-    queryKey: ['processing-job', documentId],
-    queryFn: () => getProcessingJob(documentId),
-    enabled: !!documentId && !!document && isProcessing(document.status),
-    refetchInterval: isProcessing(document?.status || '') ? 3000 : false,
-  });
-
-  // Fetch chapters (only if completed)
+  // Fetch chapters (only when completed)
   const { data: chapters } = useQuery({
     queryKey: ['chapters', documentId],
     queryFn: () => getChapters(documentId),
     enabled: !!documentId && document?.status === 'completed',
   });
+
+  // Track page view for processing screen
+  useEffect(() => {
+    if (document && isProcessing(document.status)) {
+      track('processing_progress_view_opened', { document_id: documentId });
+    }
+  }, [documentId, document?.status]);
 
   const handleDownload = async () => {
     if (!document) return;
@@ -78,8 +78,8 @@ export default function DocumentDetailPage() {
     try {
       const blob = await downloadAudiobook(documentId);
       triggerDownload(blob, `${document.title}.mp3`);
-    } catch (error) {
-      console.error('Download failed:', error);
+    } catch {
+      // error handled silently — user can retry download
     } finally {
       setIsDownloading(false);
     }
@@ -87,12 +87,12 @@ export default function DocumentDetailPage() {
 
   const handleRetry = async () => {
     setIsRetrying(true);
+    setWasCancelled(false);
     try {
       await retryProcessing(documentId);
       await refetchDoc();
-      await refetchJob();
-    } catch (error) {
-      console.error('Retry failed:', error);
+    } catch {
+      // error handled silently
     } finally {
       setIsRetrying(false);
     }
@@ -100,41 +100,32 @@ export default function DocumentDetailPage() {
 
   const handleChapterSelect = useCallback((chapterNumber: number, timestamp: number) => {
     setCurrentChapter(chapterNumber);
-    const event = new CustomEvent('seek-to-timestamp', { detail: { timestamp } });
-    window.dispatchEvent(event);
+    window.dispatchEvent(new CustomEvent('seek-to-timestamp', { detail: { timestamp } }));
   }, []);
 
   const handleChapterChange = useCallback((chapterNumber: number) => {
     setCurrentChapter(chapterNumber);
   }, []);
 
+  const handleCancelled = useCallback(() => {
+    setWasCancelled(true);
+    refetchDoc();
+  }, [refetchDoc]);
+
   // Format utilities
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      month: 'long',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
+  const formatDate = (dateString: string) =>
+    new Date(dateString).toLocaleDateString('en-US', {
+      month: 'long', day: 'numeric', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
     });
-  };
-
-  const formatFileSize = (bytes: number) => {
-    const mb = bytes / 1024 / 1024;
-    return `${mb.toFixed(2)} MB`;
-  };
-
+  const formatFileSize = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(2)} MB`;
   const formatDuration = (seconds?: number) => {
     if (!seconds) return 'N/A';
-    const hours = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    if (hours > 0) {
-      return `${hours}h ${mins}m`;
-    }
-    return `${mins}m`;
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
   };
 
-  // Loading state
   if (isLoadingDoc) {
     return (
       <div className="space-y-6 animate-in fade-in duration-300">
@@ -145,21 +136,17 @@ export default function DocumentDetailPage() {
     );
   }
 
-  // Error state
   if (docError || !document) {
     return (
       <div className="space-y-6">
         <Button asChild variant="ghost">
           <Link href="/documents">
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Documents
+            <ArrowLeft className="h-4 w-4 mr-2" />Back to Documents
           </Link>
         </Button>
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertDescription>
-            Failed to load document. Please try again.
-          </AlertDescription>
+          <AlertDescription>Failed to load document. Please try again.</AlertDescription>
         </Alert>
       </div>
     );
@@ -167,7 +154,8 @@ export default function DocumentDetailPage() {
 
   const isCompleted = document.status === 'completed';
   const isFailed = document.status === 'failed';
-  const isCurrentlyProcessing = isProcessing(document.status);
+  const isCancelled = document.status === 'cancelled' || wasCancelled;
+  const isCurrentlyProcessing = isProcessing(document.status) && !isCancelled;
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -175,18 +163,15 @@ export default function DocumentDetailPage() {
       <div className="space-y-4">
         <Button asChild variant="ghost" size="sm">
           <Link href="/documents">
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Documents
+            <ArrowLeft className="h-4 w-4 mr-2" />Back to Documents
           </Link>
         </Button>
-        
+
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1 min-w-0 space-y-2">
             <div className="flex items-center gap-3 flex-wrap">
-              <h1 className="text-3xl font-bold tracking-tight">
-                {document.title}
-              </h1>
-              <StatusBadge status={document.status} />
+              <h1 className="text-3xl font-bold tracking-tight">{document.title}</h1>
+              <StatusBadge status={isCancelled ? 'cancelled' : document.status} />
             </div>
             <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
               <div className="flex items-center gap-1">
@@ -224,19 +209,19 @@ export default function DocumentDetailPage() {
           {canDownload(document.status) && document.audiobook_url && (
             <Button onClick={handleDownload} disabled={isDownloading}>
               <Download className="h-4 w-4 mr-2" />
-              {isDownloading ? 'Downloading...' : 'Download MP3'}
+              {isDownloading ? 'Downloading…' : 'Download MP3'}
             </Button>
           )}
-          {canRetry(document.status) && (
+          {(canRetry(document.status) || isCancelled) && (
             <Button onClick={handleRetry} disabled={isRetrying} variant="outline">
               <RefreshCw className={`h-4 w-4 mr-2 ${isRetrying ? 'animate-spin' : ''}`} />
-              Retry Processing
+              {isCancelled ? 'Restart conversion' : 'Retry processing'}
             </Button>
           )}
         </div>
       </div>
 
-      {/* Error Alert */}
+      {/* Error alert */}
       {isFailed && document.error_message && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
@@ -244,83 +229,98 @@ export default function DocumentDetailPage() {
         </Alert>
       )}
 
-      {/* Processing Timeline */}
-      {isCurrentlyProcessing && job && (
-        <ProcessingTimeline job={job} />
+      {/* Processing timeline — self-contained: has its own polling + cancel */}
+      {isCurrentlyProcessing && (
+        <ProcessingTimeline
+          documentId={documentId}
+          onCancelled={handleCancelled}
+        />
       )}
 
-      {/* Audio Player & Chapters - Completed Only */}
+      {/* Audio Player & Chapters — completed only */}
       {isCompleted && document.audiobook_url && (
-        <div className="grid gap-6 lg:grid-cols-3">
-          <div className="lg:col-span-2 space-y-6">
-            {/* Audio Player */}
-            <AudioPlayer
-              audioUrl={document.audiobook_url}
-              chapters={chapters}
-              documentId={documentId}
-              title={document.title}
-              onChapterChange={handleChapterChange}
-            />
-
-            {/* Document Details */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Document Details</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <dl className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <dt className="text-sm text-muted-foreground">Original File</dt>
-                    <dd className="font-medium">{document.filename}</dd>
-                  </div>
-                  <div className="space-y-1">
-                    <dt className="text-sm text-muted-foreground">Upload Date</dt>
-                    <dd className="font-medium">{formatDate(document.upload_date)}</dd>
-                  </div>
-                  {document.completed_date && (
-                    <div className="space-y-1">
-                      <dt className="text-sm text-muted-foreground">Completed Date</dt>
-                      <dd className="font-medium">{formatDate(document.completed_date)}</dd>
-                    </div>
-                  )}
-                  <div className="space-y-1">
-                    <dt className="text-sm text-muted-foreground">File Size</dt>
-                    <dd className="font-medium">{formatFileSize(document.file_size)}</dd>
-                  </div>
-                  {document.metadata?.pages && (
-                    <div className="space-y-1">
-                      <dt className="text-sm text-muted-foreground">Total Pages</dt>
-                      <dd className="font-medium">{document.metadata.pages}</dd>
-                    </div>
-                  )}
-                  {document.metadata?.duration_seconds && (
-                    <div className="space-y-1">
-                      <dt className="text-sm text-muted-foreground">Total Duration</dt>
-                      <dd className="font-medium">
-                        {formatDuration(document.metadata.duration_seconds)}
-                      </dd>
-                    </div>
-                  )}
-                </dl>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Chapter Navigation */}
-          <div className="lg:col-span-1">
-            {chapters && chapters.length > 0 && (
+        <div className="space-y-4">
+          {/* Mobile chapters button — sits above player */}
+          {chapters && chapters.length > 1 && (
+            <div className="lg:hidden">
               <ChapterNavigation
                 chapters={chapters}
                 currentChapter={currentChapter}
                 onChapterSelect={handleChapterSelect}
               />
-            )}
+            </div>
+          )}
+
+          <div className="grid gap-6 lg:grid-cols-3">
+            <div className="lg:col-span-2 space-y-6">
+              <AudioPlayer
+                audioUrl={document.audiobook_url}
+                chapters={chapters}
+                documentId={documentId}
+                title={document.title}
+                onChapterChange={handleChapterChange}
+              />
+
+              {/* Document Details */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Document Details</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <dl className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <dt className="text-sm text-muted-foreground">Original File</dt>
+                      <dd className="font-medium">{document.filename}</dd>
+                    </div>
+                    <div className="space-y-1">
+                      <dt className="text-sm text-muted-foreground">Upload Date</dt>
+                      <dd className="font-medium">{formatDate(document.upload_date)}</dd>
+                    </div>
+                    {document.completed_date && (
+                      <div className="space-y-1">
+                        <dt className="text-sm text-muted-foreground">Completed Date</dt>
+                        <dd className="font-medium">{formatDate(document.completed_date)}</dd>
+                      </div>
+                    )}
+                    <div className="space-y-1">
+                      <dt className="text-sm text-muted-foreground">File Size</dt>
+                      <dd className="font-medium">{formatFileSize(document.file_size)}</dd>
+                    </div>
+                    {document.metadata?.pages && (
+                      <div className="space-y-1">
+                        <dt className="text-sm text-muted-foreground">Total Pages</dt>
+                        <dd className="font-medium">{document.metadata.pages}</dd>
+                      </div>
+                    )}
+                    {document.metadata?.duration_seconds && (
+                      <div className="space-y-1">
+                        <dt className="text-sm text-muted-foreground">Total Duration</dt>
+                        <dd className="font-medium">
+                          {formatDuration(document.metadata.duration_seconds)}
+                        </dd>
+                      </div>
+                    )}
+                  </dl>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Desktop chapter sidebar */}
+            <div className="lg:col-span-1 hidden lg:block">
+              {chapters && chapters.length > 0 && (
+                <ChapterNavigation
+                  chapters={chapters}
+                  currentChapter={currentChapter}
+                  onChapterSelect={handleChapterSelect}
+                />
+              )}
+            </div>
           </div>
         </div>
       )}
 
-      {/* Waiting for Processing */}
-      {document.status === 'pending' && (
+      {/* Queued / pending state */}
+      {document.status === 'pending' && !isCurrentlyProcessing && (
         <Card>
           <CardContent className="py-12 text-center">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-4">
@@ -328,8 +328,7 @@ export default function DocumentDetailPage() {
             </div>
             <h3 className="text-lg font-semibold mb-2">Processing Queued</h3>
             <p className="text-muted-foreground max-w-md mx-auto">
-              Your document is in the queue and will start processing soon.
-              This page will update automatically.
+              Your document is in the queue and will start processing soon. This page updates automatically.
             </p>
           </CardContent>
         </Card>

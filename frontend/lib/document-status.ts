@@ -4,12 +4,13 @@
  * Maps backend document/job statuses to UI-friendly labels, colors, and descriptions
  */
 
-export type DocumentStatus = 
-  | 'pending' 
-  | 'processing' 
-  | 'completed' 
-  | 'failed' 
-  | 'queued';
+export type DocumentStatus =
+  | 'pending'
+  | 'processing'
+  | 'completed'
+  | 'failed'
+  | 'queued'
+  | 'cancelled';
 
 export type ProcessingStage = 
   | 'uploading'
@@ -34,6 +35,12 @@ export const statusConfig: Record<DocumentStatus, StatusConfig> = {
     color: 'secondary',
     description: 'Document is queued for processing',
     progressPercent: 5,
+  },
+  cancelled: {
+    label: 'Cancelled',
+    color: 'default',
+    description: 'Processing was cancelled',
+    progressPercent: 0,
   },
   queued: {
     label: 'Queued',
@@ -181,7 +188,7 @@ export function isProcessing(status: string): boolean {
  * Check if document can be retried
  */
 export function canRetry(status: string): boolean {
-  return status === 'failed';
+  return status === 'failed' || status === 'cancelled';
 }
 
 /**

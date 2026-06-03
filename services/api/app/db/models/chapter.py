@@ -131,6 +131,16 @@ class Chapter(Base):
         nullable=True,
         comment="S3 storage path for this chapter's assembled audio"
     )
+    duration_seconds = Column(
+        Float,
+        nullable=True,
+        comment="Duration of this chapter's audio in seconds (set after TTS assembly)"
+    )
+    start_time_seconds = Column(
+        Float,
+        nullable=True,
+        comment="Start time offset within the full concatenated audiobook in seconds"
+    )
 
     # Timestamps
     created_at = Column(

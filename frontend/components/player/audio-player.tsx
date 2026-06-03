@@ -1,7 +1,8 @@
 /**
  * Audio Player Component
  * =====================
- * Premium audiobook player with chapter support, speed control, and resume playback
+ * Premium audiobook player with chapter navigation, speed control, Media Session,
+ * and resume playback.
  */
 
 'use client';
@@ -17,8 +18,11 @@ import {
   SkipBack,
   Volume2,
   VolumeX,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { track } from '@/lib/analytics';
 import type { Chapter } from '@/lib/document-service';
 
 interface AudioPlayerProps {
@@ -50,14 +54,33 @@ export function AudioPlayer({
   const [isMuted, setIsMuted] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
-  const [currentChapter, setCurrentChapter] = useState<number | null>(null);
+  const [currentChapterIdx, setCurrentChapterIdx] = useState<number>(0);
   const [isDragging, setIsDragging] = useState(false);
+
+  // Sorted chapters with start_time_seconds
+  const sortedChapters = [...chapters].sort((a, b) => a.chapter_number - b.chapter_number);
+
+  // Build cumulative start times: prefer start_time_seconds from backend,
+  // fall back to accumulating duration_seconds.
+  const chapterStarts = useCallback((): number[] => {
+    const starts: number[] = [];
+    let cumulative = 0;
+    for (const ch of sortedChapters) {
+      if (ch.start_time_seconds != null) {
+        starts.push(ch.start_time_seconds);
+      } else {
+        starts.push(cumulative);
+        cumulative += ch.duration_seconds ?? 0;
+      }
+    }
+    return starts;
+  }, [sortedChapters]);
 
   // Load saved playback position
   useEffect(() => {
     const savedPosition = localStorage.getItem(`${STORAGE_PREFIX}${documentId}_position`);
     const savedSpeed = localStorage.getItem(`${STORAGE_PREFIX}${documentId}_speed`);
-    
+
     if (savedPosition) {
       const position = parseFloat(savedPosition);
       if (audioRef.current && !isNaN(position)) {
@@ -65,14 +88,12 @@ export function AudioPlayer({
         setCurrentTime(position);
       }
     }
-    
+
     if (savedSpeed) {
       const speed = parseFloat(savedSpeed);
       if (!isNaN(speed) && PLAYBACK_SPEEDS.includes(speed)) {
         setPlaybackSpeed(speed);
-        if (audioRef.current) {
-          audioRef.current.playbackRate = speed;
-        }
+        if (audioRef.current) audioRef.current.playbackRate = speed;
       }
     }
   }, [documentId]);
@@ -83,178 +104,181 @@ export function AudioPlayer({
       if (audioRef.current && isPlaying) {
         localStorage.setItem(
           `${STORAGE_PREFIX}${documentId}_position`,
-          audioRef.current.currentTime.toString()
+          audioRef.current.currentTime.toString(),
         );
       }
-    }, 5000); // Save every 5 seconds
-
+    }, 5000);
     return () => clearInterval(interval);
   }, [documentId, isPlaying]);
 
-  // Listen for seek-to-timestamp events from chapter navigation
+  // Media Session API
   useEffect(() => {
-    const handleSeekEvent = (event: Event) => {
-      const customEvent = event as CustomEvent<{ timestamp: number }>;
-      if (audioRef.current && customEvent.detail?.timestamp !== undefined) {
-        audioRef.current.currentTime = customEvent.detail.timestamp;
-        if (!isPlaying) {
-          audioRef.current.play();
-          setIsPlaying(true);
-        }
+    if (!('mediaSession' in navigator)) return;
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title,
+      artist: 'Sonoro Audiobook',
+    });
+  }, [title]);
+
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return;
+
+    navigator.mediaSession.setActionHandler('play', () => {
+      audioRef.current?.play();
+      setIsPlaying(true);
+    });
+    navigator.mediaSession.setActionHandler('pause', () => {
+      audioRef.current?.pause();
+      setIsPlaying(false);
+    });
+    navigator.mediaSession.setActionHandler('seekbackward', () => skipBackward());
+    navigator.mediaSession.setActionHandler('seekforward', () => skipForward());
+    navigator.mediaSession.setActionHandler('previoustrack', () => goToPrevChapter());
+    navigator.mediaSession.setActionHandler('nexttrack', () => goToNextChapter());
+
+    return () => {
+      const actions: MediaSessionAction[] = ['play', 'pause', 'seekbackward', 'seekforward', 'previoustrack', 'nexttrack'];
+      actions.forEach(a => {
+        try { navigator.mediaSession.setActionHandler(a, null); } catch {}
+      });
+    };
+  });
+
+  // Determine current chapter index from currentTime
+  const updateCurrentChapter = useCallback((time: number) => {
+    if (sortedChapters.length === 0) return;
+    const starts = chapterStarts();
+    let idx = 0;
+    for (let i = starts.length - 1; i >= 0; i--) {
+      if (time >= starts[i]) { idx = i; break; }
+    }
+    if (idx !== currentChapterIdx) {
+      setCurrentChapterIdx(idx);
+      onChapterChange?.(sortedChapters[idx]?.chapter_number ?? 1);
+    }
+  }, [sortedChapters, chapterStarts, currentChapterIdx, onChapterChange]);
+
+  // Listen for seek-to-timestamp events from ChapterNavigation
+  useEffect(() => {
+    const handle = (event: Event) => {
+      const e = event as CustomEvent<{ timestamp: number }>;
+      if (audioRef.current && e.detail?.timestamp !== undefined) {
+        audioRef.current.currentTime = e.detail.timestamp;
+        if (!isPlaying) { audioRef.current.play(); setIsPlaying(true); }
       }
     };
-
-    window.addEventListener('seek-to-timestamp', handleSeekEvent);
-    return () => window.removeEventListener('seek-to-timestamp', handleSeekEvent);
+    window.addEventListener('seek-to-timestamp', handle);
+    return () => window.removeEventListener('seek-to-timestamp', handle);
   }, [isPlaying]);
 
-  // Determine current chapter based on timestamp
-  const determineCurrentChapter = useCallback((time: number) => {
-    if (!chapters.length) return null;
-
-    // Chapters should have timestamp_start in seconds
-    // Assuming chapters are ordered and have timestamp_start
-    for (let i = chapters.length - 1; i >= 0; i--) {
-      const chapter = chapters[i];
-      // If chapter has audio_url, use its duration to calculate start time
-      // For now, assume chapters are sequential
-      const startTime = i === 0 ? 0 : chapters[i - 1].duration_seconds || 0;
-      if (time >= startTime) {
-        return chapter.chapter_number;
-      }
-    }
-    return chapters[0]?.chapter_number || null;
-  }, [chapters]);
-
-  // Update current chapter when time changes
-  useEffect(() => {
-    const chapterNum = determineCurrentChapter(currentTime);
-    if (chapterNum !== currentChapter) {
-      setCurrentChapter(chapterNum);
-      onChapterChange?.(chapterNum);
-    }
-  }, [currentTime, currentChapter, determineCurrentChapter, onChapterChange]);
-
-  // Audio event handlers
+  // Audio events
   const handleLoadedMetadata = () => {
-    if (audioRef.current) {
-      setDuration(audioRef.current.duration);
-      setIsLoading(false);
-    }
+    if (audioRef.current) { setDuration(audioRef.current.duration); setIsLoading(false); }
   };
-
   const handleTimeUpdate = () => {
     if (audioRef.current && !isDragging) {
-      setCurrentTime(audioRef.current.currentTime);
+      const t = audioRef.current.currentTime;
+      setCurrentTime(t);
+      updateCurrentChapter(t);
     }
   };
-
   const handleEnded = () => {
     setIsPlaying(false);
     localStorage.removeItem(`${STORAGE_PREFIX}${documentId}_position`);
   };
-
-  const handleCanPlay = () => {
-    setIsLoading(false);
-  };
-
-  const handleWaiting = () => {
-    setIsLoading(true);
-  };
+  const handleCanPlay = () => setIsLoading(false);
+  const handleWaiting = () => setIsLoading(true);
 
   // Playback controls
   const togglePlayPause = () => {
-    if (audioRef.current) {
-      if (isPlaying) {
-        audioRef.current.pause();
-      } else {
-        audioRef.current.play();
-      }
-      setIsPlaying(!isPlaying);
-    }
+    if (!audioRef.current) return;
+    if (isPlaying) { audioRef.current.pause(); } else { audioRef.current.play(); }
+    setIsPlaying(!isPlaying);
   };
 
-  const skipForward = () => {
-    if (audioRef.current) {
-      audioRef.current.currentTime = Math.min(
-        audioRef.current.currentTime + SKIP_SECONDS,
-        duration
-      );
-    }
-  };
+  const skipForward = useCallback(() => {
+    if (audioRef.current) audioRef.current.currentTime = Math.min(audioRef.current.currentTime + SKIP_SECONDS, duration);
+  }, [duration]);
 
-  const skipBackward = () => {
+  const skipBackward = useCallback(() => {
+    if (audioRef.current) audioRef.current.currentTime = Math.max(audioRef.current.currentTime - SKIP_SECONDS, 0);
+  }, []);
+
+  const seekToChapterIndex = useCallback((idx: number) => {
+    if (idx < 0 || idx >= sortedChapters.length) return;
+    const starts = chapterStarts();
+    const ts = starts[idx] ?? 0;
     if (audioRef.current) {
-      audioRef.current.currentTime = Math.max(
-        audioRef.current.currentTime - SKIP_SECONDS,
-        0
-      );
+      audioRef.current.currentTime = ts;
+      if (!isPlaying) { audioRef.current.play(); setIsPlaying(true); }
     }
-  };
+    setCurrentChapterIdx(idx);
+    onChapterChange?.(sortedChapters[idx].chapter_number);
+  }, [sortedChapters, chapterStarts, isPlaying, onChapterChange]);
+
+  const goToPrevChapter = useCallback(() => {
+    if (sortedChapters.length === 0) { skipBackward(); return; }
+    track('chapter_previous_clicked', { document_id: documentId });
+    // If more than 3s into current chapter, restart it; otherwise go to previous
+    const starts = chapterStarts();
+    const chStart = starts[currentChapterIdx] ?? 0;
+    if (currentTime - chStart > 3 && currentChapterIdx > 0) {
+      seekToChapterIndex(currentChapterIdx);
+    } else {
+      seekToChapterIndex(Math.max(0, currentChapterIdx - 1));
+    }
+  }, [sortedChapters, chapterStarts, currentChapterIdx, currentTime, skipBackward, seekToChapterIndex, documentId]);
+
+  const goToNextChapter = useCallback(() => {
+    if (sortedChapters.length === 0) { skipForward(); return; }
+    track('chapter_next_clicked', { document_id: documentId });
+    seekToChapterIndex(Math.min(sortedChapters.length - 1, currentChapterIdx + 1));
+  }, [sortedChapters, currentChapterIdx, skipForward, seekToChapterIndex, documentId]);
 
   const handleProgressChange = (values: number[]) => {
     const newTime = values[0];
     setCurrentTime(newTime);
-    if (audioRef.current) {
-      audioRef.current.currentTime = newTime;
-    }
+    if (audioRef.current) audioRef.current.currentTime = newTime;
   };
-
-  const handleProgressDragStart = () => {
-    setIsDragging(true);
-  };
-
-  const handleProgressDragEnd = () => {
-    setIsDragging(false);
-  };
+  const handleProgressDragStart = () => setIsDragging(true);
+  const handleProgressDragEnd = () => setIsDragging(false);
 
   const handleVolumeChange = (values: number[]) => {
-    const newVolume = values[0];
-    setVolume(newVolume);
-    if (audioRef.current) {
-      audioRef.current.volume = newVolume;
-    }
-    if (newVolume === 0) {
-      setIsMuted(true);
-    } else if (isMuted) {
-      setIsMuted(false);
-    }
+    const v = values[0];
+    setVolume(v);
+    if (audioRef.current) audioRef.current.volume = v;
+    if (v === 0) setIsMuted(true);
+    else if (isMuted) setIsMuted(false);
   };
 
   const toggleMute = () => {
-    if (audioRef.current) {
-      audioRef.current.muted = !isMuted;
-      setIsMuted(!isMuted);
-    }
+    if (audioRef.current) audioRef.current.muted = !isMuted;
+    setIsMuted(!isMuted);
   };
 
   const cyclePlaybackSpeed = () => {
-    const currentIndex = PLAYBACK_SPEEDS.indexOf(playbackSpeed);
-    const nextIndex = (currentIndex + 1) % PLAYBACK_SPEEDS.length;
-    const newSpeed = PLAYBACK_SPEEDS[nextIndex];
-    setPlaybackSpeed(newSpeed);
-    if (audioRef.current) {
-      audioRef.current.playbackRate = newSpeed;
-    }
-    localStorage.setItem(`${STORAGE_PREFIX}${documentId}_speed`, newSpeed.toString());
+    const next = PLAYBACK_SPEEDS[(PLAYBACK_SPEEDS.indexOf(playbackSpeed) + 1) % PLAYBACK_SPEEDS.length];
+    setPlaybackSpeed(next);
+    if (audioRef.current) audioRef.current.playbackRate = next;
+    localStorage.setItem(`${STORAGE_PREFIX}${documentId}_speed`, next.toString());
   };
 
   const formatTime = (seconds: number) => {
     if (isNaN(seconds)) return '0:00';
-    const hrs = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    const secs = Math.floor(seconds % 60);
-    
-    if (hrs > 0) {
-      return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-    }
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    return `${m}:${s.toString().padStart(2, '0')}`;
   };
+
+  const currentChapter = sortedChapters[currentChapterIdx];
+  const hasPrev = currentChapterIdx > 0 || (sortedChapters.length === 0);
+  const hasNext = currentChapterIdx < sortedChapters.length - 1 || (sortedChapters.length === 0);
 
   return (
     <Card className={cn('w-full', className)}>
       <CardContent className="p-6 space-y-6">
-        {/* Hidden audio element */}
         <audio
           ref={audioRef}
           src={audioUrl}
@@ -266,20 +290,19 @@ export function AudioPlayer({
           preload="metadata"
         />
 
-        {/* Title */}
+        {/* Title + current chapter */}
         <div className="text-center space-y-1">
           <h3 className="font-semibold text-lg line-clamp-2">{title}</h3>
-          {currentChapter !== null && chapters.length > 0 && (
+          {sortedChapters.length > 1 && currentChapter && (
             <p className="text-sm text-muted-foreground">
-              Chapter {currentChapter}
-              {chapters.find(c => c.chapter_number === currentChapter)?.title && 
-                ` - ${chapters.find(c => c.chapter_number === currentChapter)?.title}`
-              }
+              {currentChapter.title.startsWith('Chapter') || currentChapter.title.startsWith('Part')
+                ? currentChapter.title
+                : `Chapter ${currentChapter.chapter_number} — ${currentChapter.title}`}
             </p>
           )}
         </div>
 
-        {/* Progress Bar */}
+        {/* Progress bar */}
         <div className="space-y-2">
           <Slider
             value={[currentTime]}
@@ -300,7 +323,19 @@ export function AudioPlayer({
         </div>
 
         {/* Main Controls */}
-        <div className="flex items-center justify-center gap-4">
+        <div className="flex items-center justify-center gap-2">
+          {/* Prev chapter */}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={goToPrevChapter}
+            disabled={isLoading || (!hasPrev && sortedChapters.length > 0)}
+            aria-label="Previous chapter"
+            className="h-10 w-10"
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </Button>
+
           <Button
             variant="ghost"
             size="icon"
@@ -319,11 +354,10 @@ export function AudioPlayer({
             aria-label={isPlaying ? 'Pause' : 'Play'}
             className="h-14 w-14 rounded-full"
           >
-            {isPlaying ? (
-              <Pause className="h-6 w-6" fill="currentColor" />
-            ) : (
-              <Play className="h-6 w-6" fill="currentColor" />
-            )}
+            {isPlaying
+              ? <Pause className="h-6 w-6" fill="currentColor" />
+              : <Play className="h-6 w-6" fill="currentColor" />
+            }
           </Button>
 
           <Button
@@ -336,11 +370,22 @@ export function AudioPlayer({
           >
             <SkipForward className="h-5 w-5" />
           </Button>
+
+          {/* Next chapter */}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={goToNextChapter}
+            disabled={isLoading || (!hasNext && sortedChapters.length > 0)}
+            aria-label="Next chapter"
+            className="h-10 w-10"
+          >
+            <ChevronRight className="h-5 w-5" />
+          </Button>
         </div>
 
         {/* Secondary Controls */}
         <div className="flex items-center justify-between gap-4">
-          {/* Volume Control */}
           <div className="flex items-center gap-2 flex-1 max-w-[140px]">
             <Button
               variant="ghost"
@@ -349,11 +394,10 @@ export function AudioPlayer({
               className="h-8 w-8 shrink-0"
               aria-label={isMuted ? 'Unmute' : 'Mute'}
             >
-              {isMuted || volume === 0 ? (
-                <VolumeX className="h-4 w-4" />
-              ) : (
-                <Volume2 className="h-4 w-4" />
-              )}
+              {isMuted || volume === 0
+                ? <VolumeX className="h-4 w-4" />
+                : <Volume2 className="h-4 w-4" />
+              }
             </Button>
             <Slider
               value={[isMuted ? 0 : volume]}
@@ -366,7 +410,6 @@ export function AudioPlayer({
             />
           </div>
 
-          {/* Playback Speed */}
           <Button
             variant="outline"
             size="sm"
@@ -378,11 +421,8 @@ export function AudioPlayer({
           </Button>
         </div>
 
-        {/* Loading indicator */}
         {isLoading && (
-          <div className="text-center text-sm text-muted-foreground">
-            Loading audio...
-          </div>
+          <div className="text-center text-sm text-muted-foreground">Loading audio…</div>
         )}
       </CardContent>
     </Card>

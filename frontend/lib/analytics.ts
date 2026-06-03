@@ -43,7 +43,14 @@ export type AnalyticsEventName =
   | 'checkout_completed'
   | 'checkout_abandoned'
   | 'referral_shared'
-  | 'referral_converted';
+  | 'referral_converted'
+  | 'processing_cancel_clicked'
+  | 'processing_cancelled'
+  | 'processing_progress_view_opened'
+  | 'chapter_panel_opened'
+  | 'chapter_selected'
+  | 'chapter_next_clicked'
+  | 'chapter_previous_clicked';
 
 interface EventRecord {
   event: AnalyticsEventName;
