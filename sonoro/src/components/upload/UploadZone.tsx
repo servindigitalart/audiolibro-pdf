@@ -210,7 +210,11 @@ const WAVE_D = [0, 0.12, 0.24, 0.06, 0.18, 0.30, 0.09, 0.21, 0.03, 0.15, 0.27, 0
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export default function UploadZone() {
+interface UploadZoneProps {
+  retryDocumentId?: string;
+}
+
+export default function UploadZone({ retryDocumentId }: UploadZoneProps = {}) {
   const [stage, setStage]                 = useState<Stage>('idle');
   const [uploadPct, setUploadPct]         = useState(0);
   const [file, setFile]                   = useState<File | null>(null);
@@ -245,6 +249,16 @@ export default function UploadZone() {
   const pollRef         = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastProgressRef = useRef<{ pct: number; time: number }>({ pct: -1, time: Date.now() });
   const prevStageRef    = useRef<string>('');
+
+  // ── Retry attach: jump straight to processing for a retried document ────────
+  // When the user clicks Retry in the Library, they land on this page with
+  // ?retryDocumentId=<id>.  The retry API call already queued the job; we just
+  // need to attach to it and show the full processing screen.
+  useEffect(() => {
+    if (!retryDocumentId) return;
+    setDocId(retryDocumentId);
+    setStage('processing');
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Analytics ──────────────────────────────────────────────────────────────
 
@@ -689,11 +703,18 @@ export default function UploadZone() {
           </div>
 
           {/* ── Detected Book card ───────────────────────────────────────────── */}
-          {(bookMetaLoading || bookMeta) && (
+          {(bookMetaLoading || bookMeta) && (() => {
+            // Use a friendlier label for filename-only or low-confidence sources.
+            const isLocalSource = !bookMeta?.metadata_source ||
+              bookMeta.metadata_source === 'local';
+            const cardLabel = isLocalSource
+              ? 'Filename suggestion'
+              : 'Detected Book';
+            return (
             <div className="mb-5 rounded-xl border border-sonoro-amber/30 bg-sonoro-amber-light/20 overflow-hidden animate-fade-in">
               <div className="px-4 pt-3 pb-0.5 flex items-center justify-between">
                 <p className="text-[10px] font-semibold text-sonoro-amber-dark uppercase tracking-wider">
-                  Detected Book
+                  {bookMetaLoading && !bookMeta ? 'Identifying book…' : cardLabel}
                 </p>
                 {bookMeta && !editingBookMeta && (
                   <button
@@ -716,7 +737,7 @@ export default function UploadZone() {
                     <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" strokeOpacity=".2"/>
                     <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="4" strokeLinecap="round"/>
                   </svg>
-                  <p className="text-xs text-sonoro-600">Identifying book…</p>
+                  <p className="text-xs text-sonoro-600">Searching book database…</p>
                 </div>
               )}
 
@@ -833,7 +854,8 @@ export default function UploadZone() {
                 </div>
               )}
             </div>
-          )}
+            );
+          })()}
 
           {/* Chapter preview */}
           <div className="mb-5 rounded-xl border border-sonoro-border/60 bg-sonoro-surface/50 px-4 py-3">

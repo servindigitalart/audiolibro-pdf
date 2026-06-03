@@ -25,7 +25,10 @@ logger = logging.getLogger(__name__)
 # ── PDF embedded metadata keys ────────────────────────────────────────────────
 
 _PDF_META_TITLE_KEYS  = ("title",)
-_PDF_META_AUTHOR_KEYS = ("author", "creator")
+# NOTE: "creator" is intentionally absent — PyMuPDF meta["creator"] is the
+# software that created the original file (Word, LibreOffice, PDFCreator…),
+# never a human author.
+_PDF_META_AUTHOR_KEYS = ("author",)
 
 # ── Pirate / scanner publisher blocklist ─────────────────────────────────────
 #
@@ -44,15 +47,37 @@ _PIRATE_META_RE = re.compile(
 # Publisher-watermark pattern: "XYZ 2007: Person Name" — a known pirate stamp
 _PIRATE_STAMP_RE = re.compile(r"^\w{3,20}\s+\d{4}:\s+[A-Z]", re.ASCII)
 
+# Software-tool blocklist — PDF creation tools that appear in the creator /
+# producer / title fields and must never become book title or author.
+# Matches: "PDFCreator", "Microsoft Word 365", "Adobe Acrobat 11.0",
+#          "LibreOffice 7.2", "Version 0.9.3", etc.
+_SOFTWARE_META_RE = re.compile(
+    r"pdfcreator|pdfmaker|pdftk|pdf\s*toolkit|pdf\s*factory|"
+    r"microsoft\s+(?:word|office|print)|ms\s+word|"
+    r"libreoffice|openoffice|"
+    r"adobe\s+(?:acrobat|distiller|indesign|illustrator|photoshop)|"
+    r"ghostscript|wkhtmltopdf|fpdf|reportlab|itext|dompdf|"
+    r"quartz\s+pdfcontext|mac\s+os\s+x|"
+    r"version\s+\d|v\d+\.\d+",
+    re.IGNORECASE,
+)
+
 
 def _is_trustworthy_pdf_meta(value: str) -> bool:
-    """Return False when a PDF metadata value looks like a pirate/scanner watermark."""
-    if _PIRATE_META_RE.search(value):
+    """Return False when a PDF metadata value looks like a pirate/scanner/software stamp."""
+    v = value.strip()
+    if len(v) < 3:
         return False
-    if _PIRATE_STAMP_RE.match(value):
+    if _PIRATE_META_RE.search(v):
         return False
-    # Reject anything shorter than 3 chars (not a real title/author)
-    return len(value.strip()) >= 3
+    if _PIRATE_STAMP_RE.match(v):
+        return False
+    if _SOFTWARE_META_RE.search(v):
+        logger.debug(
+            "[METADATA] pdf_metadata_rejected_software value=%r", v[:60]
+        )
+        return False
+    return True
 
 
 # ── Filename patterns ─────────────────────────────────────────────────────────

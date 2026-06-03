@@ -1,18 +1,27 @@
 ---
 import DashboardLayout from '@/layouts/DashboardLayout.astro';
 import UploadZone from '@/components/upload/UploadZone';
+
+// When the user retries from the Library they land here with ?retryDocumentId=<id>.
+// The UploadZone attaches to the already-queued job and shows the full processing UI.
+const retryDocumentId = Astro.url.searchParams.get('retryDocumentId') ?? undefined;
+const isRetry = Boolean(retryDocumentId);
 ---
 
-<DashboardLayout title="Upload PDF – Sonoro" activeNav="upload">
+<DashboardLayout title={isRetry ? 'Processing – Sonoro' : 'Upload PDF – Sonoro'} activeNav="upload">
   <div class="max-w-2xl mx-auto">
     <div class="mb-8">
-      <h1 class="text-2xl font-bold text-sonoro-900 tracking-tight mb-1">Upload a PDF</h1>
+      <h1 class="text-2xl font-bold text-sonoro-900 tracking-tight mb-1">
+        {isRetry ? 'Converting your audiobook' : 'Upload a PDF'}
+      </h1>
       <p class="text-sm text-sonoro-muted">
-        Drop your file and we'll convert it to a natural-sounding audiobook in seconds.
+        {isRetry
+          ? 'Your audiobook is being generated. You can follow progress below.'
+          : "Drop your file and we'll convert it to a natural-sounding audiobook in seconds."}
       </p>
     </div>
 
-    <UploadZone client:load />
+    <UploadZone retryDocumentId={retryDocumentId} client:load />
 
     <div class="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-3">
       {[
