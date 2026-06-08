@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import urllib.parse
 from typing import Optional
 
@@ -73,7 +74,7 @@ class GoogleBooksProvider(BaseMetadataProvider):
             "q": q,
             "maxResults": str(_MAX_RESULTS),
             "printType": "books",
-            "projection": "lite",  # smaller payload — we only need core metadata
+            "projection": "full",  # full projection to get high-res imageLinks
         }
         if self._api_key:
             params["key"] = self._api_key
@@ -129,21 +130,24 @@ class GoogleBooksProvider(BaseMetadataProvider):
                     isbn = iid.get("identifier")
                     break
 
-        # Cover: prefer the largest available image
+        # Cover: prefer the largest available image (requires projection=full)
         image_links = info.get("imageLinks", {})
         cover_url = (
             image_links.get("extraLarge")
             or image_links.get("large")
             or image_links.get("medium")
             or image_links.get("thumbnail")
+            or image_links.get("smallThumbnail")
             or None
         )
-        # Google Books thumbnail URLs use http:// — upgrade to https
-        if cover_url and cover_url.startswith("http://"):
-            cover_url = cover_url.replace("http://", "https://", 1)
-        # Strip zoom restriction from thumbnail URL for higher resolution
-        if cover_url and "zoom=" in cover_url:
-            cover_url = cover_url.split("&zoom=")[0]
+        if cover_url:
+            # Upgrade http → https
+            if cover_url.startswith("http://"):
+                cover_url = "https://" + cover_url[7:]
+            # Remove edge=curl distortion
+            cover_url = cover_url.replace("&edge=curl", "")
+            # Remove zoom restriction to allow higher resolution
+            cover_url = re.sub(r"&zoom=\d+", "", cover_url)
 
         categories = info.get("categories", [])
 

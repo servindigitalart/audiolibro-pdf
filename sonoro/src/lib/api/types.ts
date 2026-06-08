@@ -79,6 +79,34 @@ export interface ProcessingJob {
   };
 }
 
+export interface CoverCandidate {
+  id: string;
+  source: 'google_books' | 'open_library' | 'generated';
+  title?: string;
+  author?: string;
+  isbn_10?: string;
+  isbn_13?: string;
+  /** Small image for the suggestion carousel */
+  thumbnail_url: string;
+  /** Full-size URL — used by POST /cover/select */
+  image_url: string;
+  match_score: number;
+  confidence_label: 'high' | 'medium' | 'low';
+  provider_volume_id?: string;
+  reason: string;
+}
+
+export interface CoverSuggestionsResponse {
+  document_id: string;
+  query: {
+    title?: string;
+    author?: string;
+    isbn?: string;
+    language?: string;
+  };
+  candidates: CoverCandidate[];
+}
+
 export interface Chapter {
   id: string;
   document_id: string;

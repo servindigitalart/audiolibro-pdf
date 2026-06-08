@@ -14,6 +14,8 @@ import type { Chapter, ProcessingJob, PreflightResult, Document } from '@/lib/ap
 import { fmtFileSize, fmtDuration, fmtChars } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import VoicePicker from '@/components/upload/VoicePicker';
+import CoverSuggestions from '@/components/upload/CoverSuggestions';
+import { uploadCover } from '@/lib/api/client';
 
 type Stage = 'idle' | 'uploading' | 'preflight' | 'processing' | 'ready' | 'error' | 'duplicate';
 type ProcessStage = ProcessingJob['stage'];
@@ -785,6 +787,68 @@ export default function UploadZone({ retryDocumentId }: UploadZoneProps = {}) {
                         : 'Low confidence'}
                     </span>
                   </div>
+
+                  {/* Cover suggestions — shown when we have a docId and no cover already selected */}
+                  {docId && !bookMeta.cover_url && (
+                    <div className="mt-3 pt-3 border-t border-sonoro-amber/20">
+                      <p className="text-[10px] font-semibold text-sonoro-500 uppercase tracking-wider mb-2">
+                        Cover art
+                      </p>
+                      <CoverSuggestions
+                        documentId={docId}
+                        autoLoad
+                        onSelect={(coverUrl) => {
+                          setBookMeta(prev => prev ? { ...prev, cover_url: coverUrl } : prev);
+                          track('cover_suggestion_selected', { document_id: docId });
+                        }}
+                        onUpload={() => {
+                          const input = document.createElement('input');
+                          input.type = 'file';
+                          input.accept = 'image/jpeg,image/png,image/webp';
+                          input.onchange = async () => {
+                            const file = input.files?.[0];
+                            if (!file || !docId) return;
+                            try {
+                              const { cover_url } = await uploadCover(docId, file);
+                              setBookMeta(prev => prev ? { ...prev, cover_url } : prev);
+                              track('cover_uploaded_manual', { document_id: docId });
+                            } catch { /* non-fatal */ }
+                          };
+                          input.click();
+                        }}
+                        onSkip={() => {
+                          track('generated_cover_used', { document_id: docId });
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  {/* Show cover already applied confirmation */}
+                  {docId && bookMeta.cover_url && (
+                    <div className="mt-2 pt-2 border-t border-sonoro-amber/20 flex items-center justify-between gap-2">
+                      <span className="text-[10px] text-emerald-700">Cover ready for your audiobook</span>
+                      <button
+                        type="button"
+                        className="text-[10px] text-sonoro-400 hover:text-sonoro-600 transition-colors"
+                        onClick={() => {
+                          const input = document.createElement('input');
+                          input.type = 'file';
+                          input.accept = 'image/jpeg,image/png,image/webp';
+                          input.onchange = async () => {
+                            const file = input.files?.[0];
+                            if (!file || !docId) return;
+                            try {
+                              const { cover_url } = await uploadCover(docId, file);
+                              setBookMeta(prev => prev ? { ...prev, cover_url } : prev);
+                            } catch { /* non-fatal */ }
+                          };
+                          input.click();
+                        }}
+                      >
+                        Change
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 

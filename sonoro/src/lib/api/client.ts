@@ -252,6 +252,24 @@ export async function resetCover(documentId: string): Promise<void> {
   await api.delete(`/documents/${documentId}/cover`);
 }
 
+export async function getCoverSuggestions(documentId: string) {
+  const { data } = await api.get(`/documents/${documentId}/cover-suggestions`);
+  return data as import('./types').CoverSuggestionsResponse;
+}
+
+export async function selectCoverSuggestion(
+  documentId: string,
+  candidate: import('./types').CoverCandidate,
+): Promise<{ cover_url: string }> {
+  const { data } = await api.post(`/documents/${documentId}/cover/select`, {
+    image_url:        candidate.image_url,
+    source:           candidate.source,
+    match_score:      candidate.match_score,
+    provider_volume_id: candidate.provider_volume_id,
+  });
+  return data as { cover_url: string };
+}
+
 export async function patchBookMetadata(
   documentId: string,
   fields: { display_title?: string; author?: string; subtitle?: string; isbn?: string },

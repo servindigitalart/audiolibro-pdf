@@ -862,6 +862,259 @@ async def reset_document_cover(
 
 
 # ============================================
+# COVER INTELLIGENCE V2 ENDPOINTS
+# ============================================
+
+_COVER_SUGGESTION_ALLOWED_DOMAINS = frozenset({
+    "books.google.com",
+    "googleusercontent.com",
+    "lh3.googleusercontent.com",
+    "covers.openlibrary.org",
+    "archive.org",
+})
+
+_MAX_SELECT_IMAGE_BYTES = 5 * 1024 * 1024  # 5 MB
+_SELECT_DOWNLOAD_TIMEOUT = 8.0             # seconds
+
+
+def _url_domain_allowed(url: str) -> bool:
+    import urllib.parse as _urlp
+    try:
+        host = _urlp.urlparse(url).netloc.lower().split(":")[0]
+        return any(
+            host == d or host.endswith("." + d)
+            for d in _COVER_SUGGESTION_ALLOWED_DOMAINS
+        )
+    except Exception:
+        return False
+
+
+@router.get(
+    "/{document_id}/cover-suggestions",
+    summary="Get Cover Suggestions",
+    description="Return ranked cover candidates from Google Books and Open Library for a document.",
+)
+async def get_cover_suggestions(
+    document_id: UUID,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    from app.db.models.document import Document as _DocModel
+    from app.metadata.cover_service import get_cover_suggestions as _get_suggestions
+    from app.core.config import settings as _settings
+
+    doc_result = await db.execute(
+        select(_DocModel).where(
+            _DocModel.id == document_id,
+            _DocModel.user_id == current_user.id,
+        )
+    )
+    doc = doc_result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    # Resolve best query inputs
+    title  = getattr(doc, "display_title", None) or getattr(doc, "title", None)
+    author = getattr(doc, "author", None)
+    isbn   = getattr(doc, "isbn", None)
+    lang   = getattr(doc, "language_detected", None)
+
+    api_key = getattr(_settings, "google_books_api_key", "") or ""
+
+    candidates = await _get_suggestions(
+        title=title,
+        author=author,
+        isbn=isbn,
+        language=lang,
+        api_key=api_key,
+    )
+
+    serialized = [
+        {
+            "id":                 c.id,
+            "source":             c.source,
+            "title":              c.title,
+            "author":             c.author,
+            "isbn_10":            c.isbn_10,
+            "isbn_13":            c.isbn_13,
+            "thumbnail_url":      c.thumbnail_url,
+            "match_score":        c.match_score,
+            "confidence_label":   c.confidence_label,
+            "provider_volume_id": c.provider_volume_id,
+            "reason":             c.reason,
+            # image_url is intentionally NOT sent to the client — the client
+            # passes provider_volume_id + source back and we re-derive the
+            # download URL server-side at selection time.
+            "image_url":          c.image_url,
+        }
+        for c in candidates
+    ]
+
+    logger.info(
+        "[SONORO] cover_suggestions document_id=%s user_id=%s count=%d",
+        document_id, current_user.id, len(serialized),
+    )
+
+    try:
+        from app.analytics.analytics_service import AnalyticsService
+        await AnalyticsService.record_event(
+            db=db,
+            user_id=current_user.id,
+            event_type="cover_suggestions_requested",
+            document_id=document_id,
+            properties={
+                "candidate_count": len(serialized),
+                "top_score": serialized[0]["match_score"] if serialized else 0,
+                "has_author": bool(author),
+                "has_isbn": bool(isbn),
+                "document_language": lang,
+            },
+        )
+    except Exception:
+        pass
+
+    return {
+        "document_id": str(document_id),
+        "query": {
+            "title": title,
+            "author": author,
+            "isbn": isbn,
+            "language": lang,
+        },
+        "candidates": serialized,
+    }
+
+
+class _CoverSelectBody:
+    pass
+
+
+@router.post(
+    "/{document_id}/cover/select",
+    summary="Select Cover from Suggestion",
+    description=(
+        "Download a provider-suggested cover server-side, validate it, "
+        "upload to Sonoro storage, and set it as the document cover."
+    ),
+)
+async def select_cover_suggestion(
+    document_id: UUID,
+    body: dict = Body(...),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    import re as _re
+    import httpx as _httpx
+    from app.db.models.document import Document as _DocModel
+    from app.metadata.service import _magic_ext, _content_type_to_ext
+
+    image_url   = (body.get("image_url") or "").strip()
+    source      = (body.get("source") or "").strip()
+    match_score = float(body.get("match_score") or 0.0)
+
+    if not image_url:
+        raise HTTPException(status_code=400, detail="image_url is required")
+
+    # ── SSRF guard ────────────────────────────────────────────────────────────
+    if not _url_domain_allowed(image_url):
+        logger.warning(
+            "[SONORO] cover_select_ssrf_blocked url=%s user_id=%s",
+            image_url[:120], current_user.id,
+        )
+        raise HTTPException(status_code=400, detail="Image URL domain not allowed")
+
+    # Must be HTTPS
+    if not image_url.startswith("https://"):
+        raise HTTPException(status_code=400, detail="Image URL must use HTTPS")
+
+    # ── Ownership check ───────────────────────────────────────────────────────
+    doc_result = await db.execute(
+        select(_DocModel).where(
+            _DocModel.id == document_id,
+            _DocModel.user_id == current_user.id,
+        )
+    )
+    doc = doc_result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # ── Download image ────────────────────────────────────────────────────────
+    try:
+        async with _httpx.AsyncClient(
+            timeout=_SELECT_DOWNLOAD_TIMEOUT,
+            follow_redirects=True,
+            max_redirects=3,
+        ) as client:
+            resp = await client.get(image_url)
+            if resp.status_code != 200:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Could not download cover image (HTTP {resp.status_code})",
+                )
+            image_bytes = resp.content
+    except _httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Cover image download timed out")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("[SONORO] cover_select_download_error url=%s err=%s", image_url[:80], exc)
+        raise HTTPException(status_code=502, detail="Failed to download cover image")
+
+    # ── Size limit ────────────────────────────────────────────────────────────
+    if len(image_bytes) > _MAX_SELECT_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="Cover image exceeds 5 MB limit")
+
+    if len(image_bytes) < 100:
+        raise HTTPException(status_code=422, detail="Downloaded image is too small")
+
+    # ── Magic bytes validation ────────────────────────────────────────────────
+    ext = _magic_ext(image_bytes)
+    if not ext:
+        ct = (resp.headers.get("content-type", "").split(";")[0]).strip()
+        ext = _content_type_to_ext(ct)
+    if not ext:
+        raise HTTPException(status_code=422, detail="Downloaded file does not appear to be a valid image")
+
+    # ── Upload to storage ─────────────────────────────────────────────────────
+    storage_service = get_storage_service()
+    storage_path = await storage_service.upload_image(
+        image_data=image_bytes,
+        user_id=current_user.id,
+        document_id=document_id,
+        ext=ext,
+    )
+
+    doc.cover_object_key = storage_path
+    await db.commit()
+
+    cover_url = await storage_service.generate_image_url(storage_path, expiry_seconds=3600)
+
+    logger.info(
+        "[SONORO] cover_selected document_id=%s user_id=%s source=%s score=%.2f size=%d",
+        document_id, current_user.id, source, match_score, len(image_bytes),
+    )
+
+    try:
+        from app.analytics.analytics_service import AnalyticsService
+        await AnalyticsService.record_event(
+            db=db,
+            user_id=current_user.id,
+            event_type="cover_suggestion_selected",
+            document_id=document_id,
+            properties={
+                "source":      source,
+                "match_score": round(match_score, 3),
+                "image_size":  len(image_bytes),
+                "ext":         ext,
+            },
+        )
+    except Exception:
+        pass
+
+    return {"cover_url": cover_url}
+
+
+# ============================================
 # AUDIO DOWNLOAD ENDPOINT
 # ============================================
 
