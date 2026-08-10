@@ -20,7 +20,6 @@ from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
-from celery import Task
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
@@ -174,31 +173,25 @@ async def _ffmpeg_concat(input_paths: list, output_path: str) -> int:
 
 
 # ============================================
-# CUSTOM TASK CLASS
-# ============================================
-
-class ProcessingTask(Task):
-    """
-    Custom Celery task class with retry logic.
-    """
-    
-    autoretry_for = (Exception,)
-    retry_kwargs = {"max_retries": 3}
-    retry_backoff = True
-    retry_backoff_max = 600  # 10 minutes
-    retry_jitter = True
-
-
-# ============================================
 # MAIN PROCESSING TASK
 # ============================================
+# `autoretry_for` is deliberately absent.  The pipeline has no checkpoint, so a
+# retried task restarts at step 1 and re-synthesizes every already-paid chunk —
+# the old (Exception,)/max_retries=3 policy billed a book failing at 95% FOUR
+# times.  Transient errors are retried per chunk in TTSService.synthesize_text
+# instead; a job that still fails stays FAILED for POST /documents/{id}/retry.
+# Re-add job-level retry only once JobCheckpoint lets it resume, not restart.
+#
+# ponytail: acks_late + reject_on_worker_lost still let the broker redeliver a
+# job whose worker died mid-synthesis, which re-synthesizes from scratch.  That
+# path is rare and losing the job entirely is worse; JobCheckpoint closes it.
 
 @celery_app.task(
     name="process_document_job",
-    base=ProcessingTask,
     bind=True,
     acks_late=True,
     reject_on_worker_lost=True,
+    max_retries=0,  # belt to the missing autoretry_for: self.retry() cannot resurrect it
 )
 def process_document_job(self, job_id: str):
     """

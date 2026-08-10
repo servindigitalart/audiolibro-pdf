@@ -17,6 +17,7 @@ Does NOT handle:
 - Multi-provider routing (future)
 """
 
+import asyncio
 import logging
 import time
 from typing import Optional
@@ -27,13 +28,33 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.financial.cost.cost_tracker import CostTracker
 from app.financial.cost.cost_enums import CostEventType, CostProvider
-from app.services.tts.base import TTSProvider, TTSProviderError
+from app.services.tts.base import (
+    TTSNetworkError,
+    TTSProvider,
+    TTSProviderError,
+    TTSQuotaExceededError,
+)
 from app.services.tts.google_provider import GoogleTTSProvider
 from app.financial.financial_metrics import (
     cost_events_total,
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================
+# PER-CHUNK RETRY POLICY
+# ============================================
+# A transient provider failure used to bubble all the way up and fail the whole
+# job, which Celery then retried from step 1 — re-synthesizing every chunk
+# already paid for.  Retrying here instead means one 503 costs one chunk.
+#
+# Only transient subclasses are retried.  TTSInvalidInputError (bad text/voice)
+# and bare TTSProviderError (unknown cause) fail fast: retrying a permanent
+# error just bills the same failure three times.
+_RETRYABLE_ERRORS = (TTSNetworkError, TTSQuotaExceededError)
+_MAX_SYNTHESIS_ATTEMPTS = 3
+_RETRY_BACKOFF_SECONDS = 2.0  # attempt 1 waits 2s, attempt 2 waits 4s
 
 
 # ============================================
@@ -181,15 +202,30 @@ class TTSService:
         start_time = time.time()
         
         try:
-            # Call provider
-            audio_bytes = await self.provider.synthesize(
-                text=text,
-                voice_id=voice_id,
-                language_code=language_code,
-                speaking_rate=speaking_rate,
-                pitch=pitch,
-            )
-            
+            # Call provider, retrying transient failures in place so a single
+            # 503 does not discard every chunk synthesized so far.
+            for attempt in range(1, _MAX_SYNTHESIS_ATTEMPTS + 1):
+                try:
+                    audio_bytes = await self.provider.synthesize(
+                        text=text,
+                        voice_id=voice_id,
+                        language_code=language_code,
+                        speaking_rate=speaking_rate,
+                        pitch=pitch,
+                    )
+                    break
+                except _RETRYABLE_ERRORS as e:
+                    if attempt == _MAX_SYNTHESIS_ATTEMPTS:
+                        raise
+                    delay = _RETRY_BACKOFF_SECONDS ** attempt
+                    logger.warning(
+                        "[SONORO] tts_chunk_retry attempt=%d/%d delay=%.1fs "
+                        "chars=%d error_type=%s error=%s",
+                        attempt, _MAX_SYNTHESIS_ATTEMPTS, delay,
+                        character_count, e.__class__.__name__, str(e),
+                    )
+                    await asyncio.sleep(delay)
+
             # Calculate actual duration
             duration = time.time() - start_time
             
