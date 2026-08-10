@@ -88,6 +88,8 @@ async def test_dispatch_job_disposes_engine_on_failure():
     mock_engine = AsyncMock(spec=AsyncEngine)
     mock_factory = MagicMock(spec=async_sessionmaker)
 
+    import app.tasks.processing as proc
+
     disposed = []
 
     async def fake_engine_dispose():
