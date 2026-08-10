@@ -171,7 +171,11 @@ class StructuralAnalyzer:
         
         # Refine ranges
         detected = self._refine_chapter_ranges(detected)
-        
+
+        # The final chapter runs to the end of the document
+        if detected:
+            detected[-1].end_page = max(pages[-1].page_number, detected[-1].start_page)
+
         logger.info(f"Structural analysis found {len(detected)} chapters")
         return detected
     

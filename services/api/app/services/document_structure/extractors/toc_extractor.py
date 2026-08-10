@@ -8,7 +8,8 @@ This is the highest confidence detection method when available.
 """
 
 import logging
-from typing import List, Optional
+from collections import Counter
+from typing import List
 
 import fitz  # PyMuPDF
 
@@ -16,6 +17,19 @@ from app.services.document_structure.models import TOCEntry, DetectedChapter
 from app.services.document_structure.exceptions import PDFExtractionError
 
 logger = logging.getLogger(__name__)
+
+
+# ── Outline level selection ───────────────────────────────────────────────────
+# Outlines are nested (Part → Chapter → Section).  Level 1 is often the Parts,
+# so hardcoding it turns an 8-chapter book into "Part I" and "Part II".
+# A level is a plausible chapter level when it has a book-like number of
+# entries and they are not each the size of a whole section of the book.
+
+_MIN_CHAPTERS = 3
+_MAX_CHAPTERS = 200
+
+# Above this, entries are Parts (or the outline is just front matter), not chapters
+_MAX_PAGES_PER_CHAPTER = 75
 
 
 class TOCExtractor:
@@ -107,14 +121,15 @@ class TOCExtractor:
             return []
         
         chapters = []
-        
-        # Filter to level 1 entries (main chapters)
-        main_entries = [e for e in toc_entries if e.level == 1]
-        
-        if not main_entries:
-            # If no level 1, use all entries
-            main_entries = toc_entries
-        
+
+        level = _select_chapter_level(toc_entries, total_pages)
+        main_entries = [e for e in toc_entries if e.level == level]
+
+        logger.info(
+            "[SONORO] toc_level_selected level=%d entries=%d total_pages=%d",
+            level, len(main_entries), total_pages,
+        )
+
         for i, entry in enumerate(main_entries):
             start_page = entry.page_number
             
@@ -160,3 +175,25 @@ class TOCExtractor:
         """
         toc_entries = self.extract_toc(pdf_path)
         return self.toc_to_chapters(toc_entries, total_pages)
+
+
+def _select_chapter_level(toc_entries: List[TOCEntry], total_pages: int) -> int:
+    """
+    Pick the outline level that holds the chapters.
+
+    The shallowest level wins as long as it looks like a chapter list: a
+    book-like entry count and entries that are not each huge.  That skips
+    Parts (too few entries, or too many pages each) without descending into
+    subsections when the level above already holds real chapters.
+
+    Falls back to the shallowest level present when no level qualifies.
+    """
+    counts = Counter(e.level for e in toc_entries)
+
+    plausible = (
+        level
+        for level, count in sorted(counts.items())
+        if _MIN_CHAPTERS <= count <= _MAX_CHAPTERS
+        and (total_pages <= 0 or total_pages / count <= _MAX_PAGES_PER_CHAPTER)
+    )
+    return next(plausible, min(counts))

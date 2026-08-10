@@ -8,12 +8,30 @@ and produces a unified, high-confidence chapter list.
 """
 
 import logging
-from typing import List, Dict, Set
-from collections import defaultdict
+from typing import List
 
 from app.services.document_structure.models import DetectedChapter
 
 logger = logging.getLogger(__name__)
+
+
+# Two detections describe the *same* chapter when their start pages are this
+# close.  Detectors disagree by at most a page (PDF outline targets the chapter
+# page, the heuristic finds the heading on the following page).
+_SAME_CHAPTER_PAGE_TOLERANCE = 1
+
+# Detection methods that come from the same detector.  A single detector never
+# emits two detections for one chapter, so two of its hits on nearby pages are
+# two chapters — not one chapter seen twice.
+_DETECTOR_FAMILY = {
+    "chapter_keyword": "heuristic",
+    "roman_numeral": "heuristic",
+}
+
+
+def _family(detection: DetectedChapter) -> str:
+    """Which detector produced this detection."""
+    return _DETECTOR_FAMILY.get(detection.detection_method, detection.detection_method)
 
 
 class ConfidenceScorer:
@@ -21,7 +39,7 @@ class ConfidenceScorer:
     Fuse multiple chapter detection strategies into final chapter list.
     
     Strategy:
-    1. Group detections by page overlap
+    1. Group detections that point at the same chapter start
     2. Calculate fusion confidence score
     3. Prefer higher-confidence methods (TOC > Heuristic > Structural)
     4. Resolve conflicts
@@ -69,23 +87,28 @@ class ConfidenceScorer:
         if not all_detections:
             return []
         
-        # Group by page overlap
-        page_groups = self._group_by_page_overlap(all_detections)
-        
+        # Group detections that describe the same chapter
+        groups = self._group_by_chapter_start(all_detections)
+
         # Fuse each group
         fused_chapters = []
-        for group in page_groups:
+        for group in groups:
             fused = self._fuse_group(group)
             if fused and fused.confidence >= min_confidence:
                 fused_chapters.append(fused)
-        
+
         # Sort by start page
         fused_chapters.sort(key=lambda c: c.start_page)
-        
+
+        # Detectors disagree on where a chapter ends; make the final ranges
+        # contiguous so no page is narrated twice and none is dropped.
+        for current, nxt in zip(fused_chapters, fused_chapters[1:]):
+            current.end_page = max(nxt.start_page - 1, current.start_page)
+
         # Assign order indices
         for i, chapter in enumerate(fused_chapters):
             chapter.order_index = i
-        
+
         logger.info(
             f"Fused {len(all_detections)} detections into {len(fused_chapters)} chapters "
             f"(avg confidence: {self._avg_confidence(fused_chapters):.2f})"
@@ -93,50 +116,52 @@ class ConfidenceScorer:
         
         return fused_chapters
     
-    def _group_by_page_overlap(
+    def _group_by_chapter_start(
         self,
         detections: List[DetectedChapter]
     ) -> List[List[DetectedChapter]]:
         """
-        Group detections that refer to the same chapter (overlapping pages).
-        
+        Group detections that refer to the same chapter.
+
+        Detections are the same chapter when they *start* within
+        `_SAME_CHAPTER_PAGE_TOLERANCE` pages of the group's first detection and
+        come from different detectors.  Comparing against the group anchor (not
+        the previous detection) stops a run of consecutive chapters from
+        chaining into one group.
+
         Args:
             detections: All detections
-            
+
         Returns:
             List of detection groups
         """
         if not detections:
             return []
-        
-        # Sort by start page
+
+        # Sort by start page — the first member of a group is its earliest start
         sorted_detections = sorted(detections, key=lambda c: c.start_page)
-        
-        groups = []
-        current_group = [sorted_detections[0]]
-        
+
+        groups: List[List[DetectedChapter]] = [[sorted_detections[0]]]
+
         for detection in sorted_detections[1:]:
-            # Check if overlaps with current group
-            group_start = min(d.start_page for d in current_group)
-            group_end = max(d.end_page for d in current_group)
-            
-            # Overlap if detection starts before group ends
-            if detection.start_page <= group_end + 1:  # Allow 1 page gap
+            current_group = groups[-1]
+            anchor = current_group[0]
+
+            same_chapter = (
+                detection.start_page - anchor.start_page <= _SAME_CHAPTER_PAGE_TOLERANCE
+                and all(_family(d) != _family(detection) for d in current_group)
+            )
+
+            if same_chapter:
                 current_group.append(detection)
             else:
-                # Start new group
-                groups.append(current_group)
-                current_group = [detection]
-        
-        # Add final group
-        if current_group:
-            groups.append(current_group)
-        
+                groups.append([detection])
+
         return groups
-    
+
     def _fuse_group(self, group: List[DetectedChapter]) -> DetectedChapter:
         """
-        Fuse a group of overlapping detections into single chapter.
+        Fuse a group of detections of the same chapter into a single chapter.
         
         Args:
             group: Detections referring to same chapter

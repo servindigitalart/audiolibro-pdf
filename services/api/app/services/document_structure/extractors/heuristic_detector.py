@@ -196,6 +196,13 @@ class HeuristicDetector:
 
         detected = _refine_chapter_ranges(detected)
 
+        # The final chapter runs to the end of the document, not to the page
+        # after its heading.
+        if detected:
+            detected[-1].end_page = max(
+                pages[-1].page_number, detected[-1].start_page
+            )
+
         avg_conf = (
             sum(c.confidence for c in detected) / len(detected) if detected else 0.0
         )

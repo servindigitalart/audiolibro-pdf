@@ -324,6 +324,41 @@ class TestFalsePositives:
 
 
 # ---------------------------------------------------------------------------
+# Page ranges
+# ---------------------------------------------------------------------------
+
+class TestChapterRanges:
+    """Every page of the document must belong to a chapter."""
+
+    def test_last_chapter_runs_to_the_end_of_the_document(self):
+        # Chapter heading on page 1, body pages 2-5: the chapter is pages 1-5,
+        # not page 1 alone.
+        pages = make_pages(
+            "Chapter 1\n\nThe story begins here with the opening scene...",
+            *["The narrative continues on this page. " * 5] * 4,
+        )
+
+        chapters = HeuristicDetector().detect_chapters(pages)
+
+        assert len(chapters) == 1
+        assert (chapters[0].start_page, chapters[0].end_page) == (1, 5)
+
+    def test_chapters_cover_every_page(self):
+        pages = make_pages(
+            "Chapter 1\n\nOpening scene of the first chapter of the book...",
+            "Continuing the first chapter with more narrative text here. " * 3,
+            "Chapter 2\n\nThe second chapter starts and the plot thickens...",
+            "Continuing the second chapter with more narrative text here. " * 3,
+            "Still inside the second chapter, approaching the end now. " * 3,
+        )
+
+        chapters = HeuristicDetector().detect_chapters(pages)
+
+        covered = {p for c in chapters for p in range(c.start_page, c.end_page + 1)}
+        assert covered == {1, 2, 3, 4, 5}
+
+
+# ---------------------------------------------------------------------------
 # Roman numeral set completeness
 # ---------------------------------------------------------------------------
 
