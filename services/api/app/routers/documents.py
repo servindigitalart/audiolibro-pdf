@@ -207,6 +207,7 @@ async def upload_document(
                         chars_remaining_after=analysis.chars_remaining_after,
                         plan_tier=analysis.plan_tier,
                         plan_display_name=analysis.plan_display_name,
+                        estimated_provider_cost_usd=analysis.estimated_provider_cost_usd,
                     )
                     result.preflight = preflight_data
             except Exception as pf_err:

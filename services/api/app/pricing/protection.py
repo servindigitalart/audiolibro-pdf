@@ -149,6 +149,27 @@ class RevenueProtectionService:
         if await self._is_throttled(user_id):
             raise NegativeMarginThrottle(user_id)
 
+    @staticmethod
+    def check_job_estimate(
+        user_id: str,
+        estimated_job_cost_usd: float,
+        max_job_cost_usd: float,
+    ) -> None:
+        """
+        Reject a single job whose *estimated* cost exceeds `max_job_cost_usd`.
+
+        This is deliberately separate from the daily/monthly caps in `check()`.
+        Those caps are calibrated for smoothed usage across a month — FREE's
+        $0.09/day is far below the $0.80 a single full-quota job costs — so they
+        cannot be used as a per-job gate without rejecting legitimate first
+        conversions.  This ceiling answers a different question: "is this one
+        job pathologically large?"
+
+        Synchronous: no Redis, no I/O.  Raises CostCapExceeded when blocked.
+        """
+        if max_job_cost_usd > 0 and estimated_job_cost_usd > max_job_cost_usd:
+            raise CostCapExceeded(user_id, "job", estimated_job_cost_usd, max_job_cost_usd)
+
     async def check_daily_only(
         self,
         user_id: str,

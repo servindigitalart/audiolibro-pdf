@@ -30,6 +30,8 @@ from app.db.models.document import Document, ProcessingStatus
 # Lightweight import — no heavy deps — needed before deferred imports run so
 # the except clause in process_document_job can reference it at parse time.
 from app.financial.quota.quota_service import QuotaExhaustedError as _QuotaExhaustedError
+# Also lightweight — raised by the pre-TTS cost guard and handled in _dispatch_job.
+from app.financial.cost.cost_guard import CostProtectionError as _CostProtectionError
 
 # Heavy service/audio imports are deferred to inside _process_job_async so that
 # missing optional dependencies (ffmpeg, google-cloud-tts, pydub, etc.) do NOT
@@ -265,6 +267,15 @@ async def _dispatch_job(job_id: UUID, task_id: str, retry_count: int) -> None:
         )
         await _mark_job_failed(job_id, str(e), retry_count, session_factory)
         # Return normally — quota failure is permanent, no Celery retry.
+    except _CostProtectionError as e:
+        # Spend was refused before any provider call, so nothing was paid for.
+        # Store the user-facing text, not the internal reason code.
+        logger.error(
+            "[SONORO] cost_protection_job_blocked job_id=%s reason=%s", job_id, e.reason
+        )
+        await _mark_job_failed(job_id, e.user_message, retry_count, session_factory)
+        # Return normally — retrying would hit the same ceiling and cost the
+        # same money to discover it.
     except _DETERMINISTIC_ERRORS as e:
         # Deterministic failures (e.g. botocore.ParamValidationError from bad S3
         # metadata) will never succeed on retry.  Mark the job FAILED and return
@@ -313,8 +324,13 @@ async def _process_job_async(
         audio_file_size_bytes,
         full_audiobook_generated_total,
     )
-    from app.pricing.unit_economics import UnitEconomicsEngine, CHARS_PER_LISTENING_HOUR
+    from app.pricing.unit_economics import (
+        UnitEconomicsEngine,
+        CHARS_PER_LISTENING_HOUR,
+        tts_cost_for_voice,
+    )
     from app.pricing.tiers import PlanTier
+    from app.financial.cost.cost_guard import check_processing_allowed, CostProtectionError
     from app.tts.narration_profiles import get_profile_or_default, prepare_text_for_profile
     from app.analytics.analytics_service import AnalyticsService
 
@@ -502,6 +518,42 @@ async def _process_job_async(
                 user_id=document.user_id,
                 requested_chars=_preflight_chars,
             )
+
+            # ============================================
+            # STEP 1d: Cost estimate + spend protection
+            # ============================================
+            # Quota bounds CHARACTERS; this bounds MONEY.  They are different
+            # questions: a user can hold remaining character quota while still
+            # sitting over a financial safety threshold, and a pathological
+            # document can be within quota yet cost more than any single job
+            # should.  Both gates run before the first paid provider request.
+            _user_result = await session.execute(
+                select(UserModel).where(UserModel.id == document.user_id)
+            )
+            _user_obj = _user_result.scalar_one_or_none()
+            _plan_tier_str = (_user_obj.plan_tier if _user_obj else "FREE") or "FREE"
+
+            _estimated_job_cost = tts_cost_for_voice(_preflight_chars, tts_voice_id)
+
+            # Persist the estimate BEFORE spending anything, so a job that dies
+            # mid-synthesis still carries what it was expected to cost.
+            job.estimated_cost_usd = round(_estimated_job_cost, 6)
+            job.plan_tier_at_generation = _plan_tier_str
+            await session.commit()
+            logger.info(
+                "[SONORO] job_cost_estimate_created job_id=%s chars=%d voice=%s "
+                "estimated_cost_usd=%.4f plan_tier=%s",
+                job_id, _preflight_chars, tts_voice_id,
+                _estimated_job_cost, _plan_tier_str,
+            )
+
+            await check_processing_allowed(
+                db=session,
+                user_id=document.user_id,
+                plan_tier=_plan_tier_str,
+                estimated_job_cost_usd=_estimated_job_cost,
+            )
+
             # Track running total of chars actually sent to TTS (for accurate
             # post-completion accounting, in case estimate differs from reality).
             _chars_synthesized = 0
@@ -576,6 +628,8 @@ async def _process_job_async(
                             language_code=tts_language_code,
                             speaking_rate=_profile.speaking_rate,
                             pitch=_profile.pitch,
+                            document_id=document.id,
+                            job_id=job_id,
                         )
                         _chars_synthesized += len(chunk)
                         p = str(tmp / f"ch1_chunk{j + 1}.mp3")
@@ -632,6 +686,8 @@ async def _process_job_async(
                                 language_code=tts_language_code,
                                 speaking_rate=_profile.speaking_rate,
                                 pitch=_profile.pitch,
+                                document_id=document.id,
+                                job_id=job_id,
                             )
                             _chars_synthesized += len(chunk)
                             p = str(tmp / f"ch{i + 1}_chunk{j + 1}.mp3")
@@ -843,35 +899,32 @@ async def _process_job_async(
                     document.user_id, _chars_synthesized, document.id,
                 )
 
-            # ── Cost telemetry (Phase 3.6) ────────────────────────────────────
-            # Look up user's plan tier for accurate cost rate selection.
-            _user_result = await session.execute(
-                select(UserModel).where(UserModel.id == document.user_id)
-            )
-            _user_obj = _user_result.scalar_one_or_none()
-            _plan_tier_str = (_user_obj.plan_tier if _user_obj else "FREE") or "FREE"
-
+            # ── Cost telemetry ────────────────────────────────────────────────
+            # _plan_tier_str was resolved before TTS started (STEP 1d) and is
+            # reused here so the tier recorded is the one protection ran against.
             try:
                 _plan_tier_enum = PlanTier(_plan_tier_str.upper())
             except ValueError:
                 _plan_tier_enum = PlanTier.FREE
 
+            # Calculated provider cost from characters ACTUALLY synthesized,
+            # priced by the voice actually used.  This replaces the old
+            # user_cost() call, which folded in a $0.15 per-user MONTHLY infra
+            # overhead — on a single job that overhead dwarfed the real provider
+            # charge and made every job look like it cost at least $0.15.
+            _calculated_cost = tts_cost_for_voice(_chars_synthesized, tts_voice_id)
             _economics = UnitEconomicsEngine()
-            _estimated_cost = _economics.user_cost(
-                _plan_tier_enum,
-                chars_used=_chars_synthesized,
-                storage_mb=0.0,  # storage tracked separately
-            )
             _listening_hours = UnitEconomicsEngine.listening_hours_for_chars(_chars_synthesized)
             _cost_per_hr = _economics.cost_per_listening_hour(_plan_tier_enum)
 
-            job.characters_processed  = _chars_synthesized
-            job.estimated_cost_usd    = round(_estimated_cost, 6)
-            job.plan_tier_at_generation = _plan_tier_str
+            job.characters_processed = _chars_synthesized
+            job.calculated_cost_usd = round(_calculated_cost, 6)
 
             logger.info(
-                "[SONORO] job_cost_estimated job_id=%s chars=%d estimated_cost_usd=%.4f plan_tier=%s",
-                job_id, _chars_synthesized, _estimated_cost, _plan_tier_str,
+                "[SONORO] job_cost_recorded job_id=%s chars=%d calculated_cost_usd=%.4f "
+                "estimated_cost_usd=%.4f voice=%s plan_tier=%s",
+                job_id, _chars_synthesized, _calculated_cost,
+                job.estimated_cost_usd or 0.0, tts_voice_id, _plan_tier_str,
             )
             logger.info(
                 "[SONORO] listening_hour_computed job_id=%s listening_hours=%.2f "

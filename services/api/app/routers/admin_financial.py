@@ -4,6 +4,7 @@ Admin Financial Router
 Admin-only endpoints for cost monitoring and quota management.
 """
 
+import calendar
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
@@ -40,26 +41,41 @@ async def get_cost_overview(
     - Daily cost trend
     - Top spending users
     """
-    tracker = CostTracker(db)
-    
-    # Get monthly cost with breakdown
-    monthly_cost = await tracker.get_system_monthly_cost()
-    
-    # Get cost trend
-    trend = await tracker.get_system_cost_trend(days=days)
-    
+    # CostTracker is an all-@staticmethod namespace; it takes no constructor.
+    monthly_cost = await CostTracker.get_system_monthly_cost(db)
+    trend = await CostTracker.get_system_cost_trend(db, days=days)
+    failures = await CostTracker.get_failure_cost_summary(db, days=days)
+    by_voice = await CostTracker.get_cost_by_voice(db, days=days)
+    top_users = await CostTracker.get_top_spending_users(db, days=days)
+
+    # Straight-line projection from month-to-date spend.  Crude on purpose —
+    # one honest number beats a forecast model nobody can audit.
+    now = datetime.utcnow()
+    days_elapsed = max(1, now.day)
+    days_in_month = calendar.monthrange(now.year, now.month)[1]
+    mtd = float(monthly_cost.get("total_cost") or 0.0)
+
     logger.info(
         "admin_cost_overview_accessed",
         admin_id=str(current_user.id),
         admin_email=current_user.email,
         days=days,
     )
-    
+
     return {
         "period": "current_month",
         "days_analyzed": days,
         "monthly_summary": monthly_cost,
         "daily_trend": trend,
+        "failure_summary": failures,
+        "cost_by_voice": by_voice,
+        "top_spending_users": top_users,
+        "month_to_date_usd": round(mtd, 6),
+        "projected_month_end_usd": round(mtd / days_elapsed * days_in_month, 6),
+        "cost_basis": (
+            "Calculated from published provider per-character rates. "
+            "Not an invoice amount — the provider exposes no per-request charge."
+        ),
         "accessed_by": current_user.email,
         "accessed_at": datetime.utcnow().isoformat(),
     }
@@ -82,14 +98,10 @@ async def get_user_cost(
     - Daily cost trend
     - Event count by type
     """
-    tracker = CostTracker(db)
-    
-    # Get monthly cost
-    monthly_cost = await tracker.get_user_monthly_cost(user_id)
-    
-    # Get cost trend
-    trend = await tracker.get_user_cost_trend(user_id, days=days)
-    
+    monthly_cost = await CostTracker.get_user_monthly_cost(db, user_id)
+    trend = await CostTracker.get_user_cost_trend(db, user_id, days=days)
+    daily_cost = await CostTracker.get_user_daily_cost(db, user_id)
+
     logger.info(
         "admin_user_cost_accessed",
         admin_id=str(current_user.id),
@@ -103,6 +115,7 @@ async def get_user_cost(
         "period": "current_month",
         "days_analyzed": days,
         "monthly_summary": monthly_cost,
+        "daily_cost_usd": round(daily_cost, 6),
         "daily_trend": trend,
         "accessed_by": current_user.email,
         "accessed_at": datetime.utcnow().isoformat(),
@@ -344,11 +357,9 @@ async def get_cost_alert_status(
     - Whether emergency shutdown is active
     """
     from app.core.config import settings
-    
-    tracker = CostTracker(db)
-    monthly_cost = await tracker.get_system_monthly_cost()
-    
-    total_cost = monthly_cost["total_cost_usd"]
+
+    # get_system_monthly_cost returns the key "total_cost", not "total_cost_usd".
+    total_cost = await CostTracker.get_system_month_to_date_cost(db)
     cost_cap = settings.global_monthly_cost_cap
     alert_threshold = settings.cost_alert_threshold_percentage
     
@@ -371,6 +382,9 @@ async def get_cost_alert_status(
         "alert_threshold_percentage": alert_threshold,
         "is_at_alert_threshold": is_at_alert_threshold,
         "is_at_cap": is_at_cap,
+        # Per-job ceiling — always enforced, unlike hard_cost_limit_enabled
+        # below, which gates only the per-user tier caps.
+        "max_job_cost_usd": settings.max_job_cost_usd,
         "emergency_shutdown_active": settings.emergency_shutdown_mode,
         "hard_cost_limit_enabled": settings.hard_cost_limit_enabled,
         "checked_by": current_user.email,

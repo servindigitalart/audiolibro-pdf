@@ -35,6 +35,7 @@ from app.services.tts.base import (
     TTSQuotaExceededError,
 )
 from app.services.tts.google_provider import GoogleTTSProvider
+from app.pricing.unit_economics import tts_cost_for_voice
 from app.financial.financial_metrics import (
     cost_events_total,
 )
@@ -150,6 +151,8 @@ class TTSService:
         language_code: Optional[str] = None,
         speaking_rate: float = 1.0,
         pitch: float = 0.0,
+        document_id: Optional[UUID] = None,
+        job_id: Optional[UUID] = None,
     ) -> bytes:
         """
         Synthesize text to speech with full tracking.
@@ -183,10 +186,14 @@ class TTSService:
         
         # Count characters
         character_count = len(text)
-        
-        # Estimate cost
-        estimated_cost = self.provider.estimate_cost(character_count)
-        
+
+        # Price the voice actually being used, not the provider's flat rate.
+        # GoogleTTSProvider.COST_PER_CHARACTER hardcodes the Neural2 rate, which
+        # over-states cost by 4× if a Standard voice is ever selected.  The
+        # ledger and the pre-generation guard must agree on one rate.
+        unit_cost = tts_cost_for_voice(1, voice_id)
+        estimated_cost = tts_cost_for_voice(character_count, voice_id)
+
         logger.info(
             f"Starting TTS synthesis",
             extra={
@@ -200,7 +207,8 @@ class TTSService:
         )
         
         start_time = time.time()
-        
+        attempt = 1
+
         try:
             # Call provider, retrying transient failures in place so a single
             # 503 does not discard every chunk synthesized so far.
@@ -217,6 +225,12 @@ class TTSService:
                 except _RETRYABLE_ERRORS as e:
                     if attempt == _MAX_SYNTHESIS_ATTEMPTS:
                         raise
+                    # Record the failed attempt so retries stay countable.  It
+                    # carries zero cost — the provider does not bill a 503.
+                    await self._record_failed_attempt(
+                        db, user_id, character_count, unit_cost, voice_id,
+                        e, attempt, document_id, job_id,
+                    )
                     delay = _RETRY_BACKOFF_SECONDS ** attempt
                     logger.warning(
                         "[SONORO] tts_chunk_retry attempt=%d/%d delay=%.1fs "
@@ -228,15 +242,21 @@ class TTSService:
 
             # Calculate actual duration
             duration = time.time() - start_time
-            
-            # Record cost event using existing cost governance
+
+            # Record the delivered chunk — exactly once, however many provider
+            # attempts it took.  A retry must never become a second charge.
             await CostTracker.track_event(
                 db=db,
                 user_id=user_id,
                 event_type=CostEventType.TTS_CHARACTERS,
                 quantity=character_count,
-                unit_cost=self.provider.estimate_cost(1),  # Cost per character
+                unit_cost=unit_cost,
                 provider=CostProvider.GOOGLE if self.provider.get_provider_name() == "google" else CostProvider.INTERNAL,
+                document_id=document_id,
+                job_id=job_id,
+                voice_id=voice_id,
+                success=True,
+                attempt_number=attempt,
                 metadata={
                     "provider": self.provider.get_provider_name(),
                     "voice_id": voice_id,
@@ -245,7 +265,7 @@ class TTSService:
                     "duration_seconds": duration,
                 }
             )
-            
+
             # Emit metrics
             tts_requests_total.labels(
                 provider=self.provider.get_provider_name(),
@@ -303,10 +323,69 @@ class TTSService:
                 },
                 exc_info=True
             )
-            
+
+            # The attempt that finally gave up is still work the provider was
+            # asked to do — keep it countable before propagating.
+            await self._record_failed_attempt(
+                db, user_id, character_count, unit_cost, voice_id,
+                e, attempt, document_id, job_id,
+            )
+
             # Re-raise for caller to handle
             raise
-    
+
+    async def _record_failed_attempt(
+        self,
+        db: AsyncSession,
+        user_id: UUID,
+        character_count: int,
+        unit_cost: float,
+        voice_id: Optional[str],
+        error: Exception,
+        attempt: int,
+        document_id: Optional[UUID],
+        job_id: Optional[UUID],
+    ) -> None:
+        """
+        Persist a zero-cost record of a failed provider attempt.
+
+        Zero-cost is the honest value: Google does not bill a failed request,
+        and we have no invoice to read.  The row exists so failed work is
+        countable — characters attempted, voice, reason — without pretending
+        money changed hands.
+
+        A ledger failure must never mask the TTS error the caller is about to
+        see, so it is logged loudly and swallowed here rather than raised.
+        """
+        try:
+            await CostTracker.track_event(
+                db=db,
+                user_id=user_id,
+                event_type=CostEventType.TTS_CHARACTERS,
+                quantity=character_count,
+                unit_cost=unit_cost,
+                provider=CostProvider.GOOGLE if self.provider.get_provider_name() == "google" else CostProvider.INTERNAL,
+                document_id=document_id,
+                job_id=job_id,
+                voice_id=voice_id,
+                success=False,
+                failure_reason=error.__class__.__name__,
+                attempt_number=attempt,
+                metadata={"error": str(error)[:500]},
+            )
+            logger.warning(
+                "[SONORO] failed_job_cost_recorded user_id=%s job_id=%s attempt=%d "
+                "chars=%d voice=%s reason=%s",
+                user_id, job_id, attempt, character_count, voice_id,
+                error.__class__.__name__,
+            )
+        except Exception as ledger_error:
+            logger.error(
+                "[SONORO] cost_event_write_failed user_id=%s job_id=%s attempt=%d error=%s",
+                user_id, job_id, attempt, str(ledger_error), exc_info=True,
+            )
+
+
     def estimate_cost(self, character_count: int) -> float:
         """
         Estimate cost without performing synthesis.

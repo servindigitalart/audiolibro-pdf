@@ -43,6 +43,10 @@ class PreflightResult(BaseModel):
     chars_remaining_after: int = Field(..., description="Characters remaining after conversion (can be negative)")
     plan_tier: str = Field(..., description="Current plan tier (FREE | BASIC | PRO | ENTERPRISE)")
     plan_display_name: str = Field(..., description="Human-readable plan name")
+    estimated_provider_cost_usd: float = Field(
+        0.0,
+        description="Estimated provider cost to produce this audiobook. An estimate for transparency, not a charge.",
+    )
 
 
 # ============================================

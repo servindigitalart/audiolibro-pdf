@@ -155,10 +155,21 @@ class ProcessingJob(Base):
         nullable=True,
         comment="TTS characters actually synthesised (exact, set on completion)"
     )
+    # Written BEFORE TTS starts (migration 031 semantics), from the document's
+    # character estimate × the rate of the voice actually selected.  Previously
+    # this was written only on success, which is why failed jobs had no cost.
     estimated_cost_usd = Column(
         Float,
         nullable=True,
-        comment="Estimated TTS+infra cost for this job in USD (set on completion)"
+        comment="Pre-generation estimated provider cost in USD (set before TTS begins)"
+    )
+    # Written after synthesis from characters ACTUALLY sent to the provider.
+    # Calculated from published per-character rates — Google exposes no
+    # per-request invoice, so this is arithmetic, not a billed amount.
+    calculated_cost_usd = Column(
+        Float,
+        nullable=True,
+        comment="Calculated provider cost from characters actually synthesized (not an invoice)"
     )
     plan_tier_at_generation = Column(
         String(20),

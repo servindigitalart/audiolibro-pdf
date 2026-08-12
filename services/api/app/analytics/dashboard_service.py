@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models.analytics import AnalyticsEvent, PlaybackSession
 from app.db.models.processing_job import ProcessingJob
 from app.db.models.user import User
+from app.financial.cost.cost_tracker import CostTracker
 from app.pricing.tiers import TIER_CATALOG, PlanTier
 
 logger = logging.getLogger(__name__)
@@ -102,12 +103,16 @@ class DashboardService:
         arpu  = mrr / total if total > 0 else 0.0
         arppu = mrr / paid  if paid  > 0 else 0.0
 
-        # ── Costs (30d job telemetry) ──────────────────────────────────────────
-        monthly_cost = float(await db.scalar(
-            select(func.sum(ProcessingJob.estimated_cost_usd))
-            .where(ProcessingJob.created_at >= cut30)
-            .where(ProcessingJob.estimated_cost_usd.isnot(None))
-        ) or 0.0)
+        # ── Costs (30d, from the cost ledger) ──────────────────────────────────
+        # Read CostEvent through CostTracker, not ProcessingJob.estimated_cost_usd:
+        # the estimate is written BEFORE generation, so a blocked, failed or
+        # cancelled job would inflate reported spend with money never paid.  The
+        # ledger already encodes the accounting rules — failed attempts carry
+        # zero cost, a retried chunk is charged once, and a job that died
+        # mid-synthesis still counts the chunks it did synthesize.
+        monthly_cost = sum(
+            day["cost"] for day in await CostTracker.get_system_cost_trend(db, days=30)
+        )
 
         margin_pct = ((mrr - monthly_cost) / mrr * 100) if mrr > 0 else 0.0
 

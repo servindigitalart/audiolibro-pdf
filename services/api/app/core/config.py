@@ -81,8 +81,20 @@ class Settings(BaseSettings):
     feature_billing_enforcement: bool = Field(default=False, description="Enable billing quota enforcement middleware")
 
     # Cost Governance & Runtime Protection
+    # Gates ONLY the per-user tier daily/monthly caps in cost_guard.  Default
+    # False on purpose: TIER_CATALOG's daily caps are calibrated for smoothed
+    # monthly usage ($0.09/day on FREE) and sit below the cost of a single
+    # full-quota job ($0.80), so enabling this without recalibrating the caps
+    # blocks legitimate FREE and BASIC conversions.  The always-on guards
+    # (emergency shutdown, global cap, per-job ceiling) do not depend on it.
     hard_cost_limit_enabled: bool = Field(
-        default=False, description="Enable hard cost limits (will block when exceeded)"
+        default=False, description="Enable per-user tier cost caps (blocks when exceeded)"
+    )
+    # Always enforced.  Set well above any legitimate book: a 540k-character
+    # worst-case Neural2 conversion is ~$8.64, so this only catches pathological
+    # documents rather than gating normal usage.
+    max_job_cost_usd: float = Field(
+        default=25.0, description="Maximum estimated provider cost for a single job in USD"
     )
     global_monthly_cost_cap: float = Field(
         default=10000.0, description="Global monthly cost cap in USD"

@@ -41,13 +41,23 @@ class CostTracker:
         unit_cost: float = 0.0,
         provider: Optional[CostProvider] = None,
         metadata: Optional[Dict] = None,
+        document_id: Optional[UUID] = None,
+        job_id: Optional[UUID] = None,
+        voice_id: Optional[str] = None,
+        success: bool = True,
+        failure_reason: Optional[str] = None,
+        attempt_number: int = 1,
     ) -> CostEvent:
         """
         Persist a cost event row.
 
         This is the only write path — all other methods are read-only reports.
+
+        A failed provider attempt is recorded with success=False and a zero
+        total_cost: the provider does not bill failed requests, so the row makes
+        the attempt *countable* without inventing a charge.
         """
-        total_cost = quantity * unit_cost
+        total_cost = (quantity * unit_cost) if success else 0.0
 
         event = CostEvent(
             user_id=user_id,
@@ -56,6 +66,12 @@ class CostTracker:
             quantity=quantity,
             unit_cost=unit_cost,
             total_cost=total_cost,
+            document_id=document_id,
+            job_id=job_id,
+            voice_id=voice_id,
+            success=success,
+            failure_reason=failure_reason,
+            attempt_number=attempt_number,
             activity_metadata=metadata or {},
         )
 
@@ -69,8 +85,47 @@ class CostTracker:
             event_type=str(event_type),
             quantity=quantity,
             total_cost=round(total_cost, 4),
+            success=success,
+            attempt_number=attempt_number,
         )
         return event
+
+    @staticmethod
+    async def get_user_daily_cost(
+        db: AsyncSession,
+        user_id: UUID,
+        day: Optional[datetime] = None,
+    ) -> float:
+        """Total calculated cost for *user_id* on *day* (UTC, defaults to today)."""
+        day = day or datetime.utcnow()
+        start = day.replace(hour=0, minute=0, second=0, microsecond=0)
+        result = await db.execute(
+            select(func.sum(CostEvent.total_cost)).where(
+                and_(
+                    CostEvent.user_id == user_id,
+                    CostEvent.created_at >= start,
+                    CostEvent.created_at < start + timedelta(days=1),
+                )
+            )
+        )
+        return float(result.scalar() or 0.0)
+
+    @staticmethod
+    async def get_system_month_to_date_cost(
+        db: AsyncSession,
+        month: Optional[datetime] = None,
+    ) -> float:
+        """System-wide calculated cost for the current month, as a bare float.
+
+        `get_system_monthly_cost` returns the full breakdown dict; the cost
+        guard runs before every job and only needs the scalar.
+        """
+        month = month or datetime.utcnow()
+        start = month.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        result = await db.execute(
+            select(func.sum(CostEvent.total_cost)).where(CostEvent.created_at >= start)
+        )
+        return float(result.scalar() or 0.0)
 
     @staticmethod
     async def get_user_monthly_cost(
@@ -208,6 +263,135 @@ class CostTracker:
         ]
 
     @staticmethod
+    async def get_system_cost_trend(
+        db: AsyncSession,
+        days: int = 30,
+    ) -> List[Dict]:
+        """System-wide daily cost trend over the last *days* days."""
+        start_date = datetime.utcnow() - timedelta(days=days)
+
+        result = await db.execute(
+            select(
+                func.date_trunc("day", CostEvent.created_at).label("date"),
+                func.sum(CostEvent.total_cost).label("cost"),
+            )
+            .where(CostEvent.created_at >= start_date)
+            .group_by(func.date_trunc("day", CostEvent.created_at))
+            .order_by(func.date_trunc("day", CostEvent.created_at))
+        )
+
+        return [
+            {"date": row.date.strftime("%Y-%m-%d"), "cost": float(row.cost or 0.0)}
+            for row in result
+        ]
+
+    @staticmethod
+    async def get_failure_cost_summary(
+        db: AsyncSession,
+        days: int = 30,
+    ) -> Dict:
+        """
+        What failed work cost, and how much of it there was.
+
+        `failed_cost_usd` is 0 by construction — the provider does not bill
+        failed requests — so the honest signal is the *volume*: how many
+        attempts failed and how many characters they covered.  A high
+        failed_chars against a low failed_cost still means wasted wall-clock,
+        quota headroom, and user patience.
+        """
+        since = datetime.utcnow() - timedelta(days=days)
+        base = CostEvent.created_at >= since
+
+        result = await db.execute(
+            select(
+                CostEvent.success,
+                func.count(CostEvent.id).label("attempts"),
+                func.sum(CostEvent.quantity).label("chars"),
+                func.sum(CostEvent.total_cost).label("cost"),
+            )
+            .where(base)
+            .group_by(CostEvent.success)
+        )
+        rows = {bool(r.success): r for r in result}
+
+        ok, bad = rows.get(True), rows.get(False)
+
+        retry_result = await db.execute(
+            select(func.count(CostEvent.id)).where(
+                and_(base, CostEvent.attempt_number > 1)
+            )
+        )
+
+        return {
+            "days": days,
+            "successful_attempts": ok.attempts if ok else 0,
+            "successful_chars": int(ok.chars or 0) if ok else 0,
+            "successful_cost_usd": round(float(ok.cost or 0.0), 6) if ok else 0.0,
+            "failed_attempts": bad.attempts if bad else 0,
+            "failed_chars": int(bad.chars or 0) if bad else 0,
+            "failed_cost_usd": round(float(bad.cost or 0.0), 6) if bad else 0.0,
+            "retry_attempts": retry_result.scalar() or 0,
+        }
+
+    @staticmethod
+    async def get_cost_by_voice(
+        db: AsyncSession,
+        days: int = 30,
+    ) -> List[Dict]:
+        """Calculated provider cost grouped by voice, most expensive first."""
+        since = datetime.utcnow() - timedelta(days=days)
+
+        result = await db.execute(
+            select(
+                CostEvent.voice_id,
+                func.sum(CostEvent.total_cost).label("cost"),
+                func.sum(CostEvent.quantity).label("chars"),
+            )
+            .where(and_(CostEvent.created_at >= since, CostEvent.voice_id.isnot(None)))
+            .group_by(CostEvent.voice_id)
+            .order_by(func.sum(CostEvent.total_cost).desc())
+        )
+
+        return [
+            {
+                "voice_id": row.voice_id,
+                "cost_usd": round(float(row.cost or 0.0), 6),
+                "characters": int(row.chars or 0),
+            }
+            for row in result
+        ]
+
+    @staticmethod
+    async def get_top_spending_users(
+        db: AsyncSession,
+        limit: int = 20,
+        days: int = 30,
+    ) -> List[Dict]:
+        """Users ranked by calculated provider cost over the last *days* days."""
+        since = datetime.utcnow() - timedelta(days=days)
+
+        result = await db.execute(
+            select(
+                CostEvent.user_id,
+                func.sum(CostEvent.total_cost).label("cost"),
+                func.sum(CostEvent.quantity).label("chars"),
+            )
+            .where(CostEvent.created_at >= since)
+            .group_by(CostEvent.user_id)
+            .order_by(func.sum(CostEvent.total_cost).desc())
+            .limit(limit)
+        )
+
+        return [
+            {
+                "user_id": str(row.user_id),
+                "cost_usd": round(float(row.cost or 0.0), 6),
+                "characters": int(row.chars or 0),
+            }
+            for row in result
+        ]
+
+    @staticmethod
     async def get_plan_economics(db: AsyncSession) -> List[Dict]:
         """
         Real per-plan average cost from completed jobs with cost telemetry.
@@ -254,12 +438,18 @@ class CostTracker:
         """
         since = datetime.utcnow() - timedelta(days=days)
 
+        # Filter on created_at, not completed_at: a job that was killed mid-run
+        # may never get a completion timestamp, and those are exactly the jobs
+        # worth reviewing.  Status is returned so failed spend is visible rather
+        # than silently mixed in with successful spend.
         result = await db.execute(
             select(
                 ProcessingJob.id.label("job_id"),
                 ProcessingJob.document_id,
                 ProcessingJob.user_id,
+                ProcessingJob.status,
                 ProcessingJob.estimated_cost_usd,
+                ProcessingJob.calculated_cost_usd,
                 ProcessingJob.characters_processed,
                 ProcessingJob.plan_tier_at_generation,
                 ProcessingJob.completed_at,
@@ -267,10 +457,14 @@ class CostTracker:
             .where(
                 and_(
                     ProcessingJob.estimated_cost_usd.isnot(None),
-                    ProcessingJob.completed_at >= since,
+                    ProcessingJob.created_at >= since,
                 )
             )
-            .order_by(ProcessingJob.estimated_cost_usd.desc())
+            .order_by(
+                func.coalesce(
+                    ProcessingJob.calculated_cost_usd, ProcessingJob.estimated_cost_usd
+                ).desc()
+            )
             .limit(limit)
         )
 
@@ -279,7 +473,12 @@ class CostTracker:
                 "job_id":               str(row.job_id),
                 "document_id":          str(row.document_id),
                 "user_id":              str(row.user_id),
-                "estimated_cost_usd":   round(float(row.estimated_cost_usd), 6),
+                "status":               str(getattr(row.status, "value", row.status)),
+                "estimated_cost_usd":   round(float(row.estimated_cost_usd or 0), 6),
+                "calculated_cost_usd":  (
+                    round(float(row.calculated_cost_usd), 6)
+                    if row.calculated_cost_usd is not None else None
+                ),
                 "characters_processed": row.characters_processed,
                 "plan_tier":            row.plan_tier_at_generation or "UNKNOWN",
                 "completed_at":         row.completed_at.isoformat() if row.completed_at else None,

@@ -9,6 +9,7 @@ from typing import Optional
 from uuid import uuid4
 
 from sqlalchemy import (
+    Boolean,
     Column,
     String,
     Integer,
@@ -86,13 +87,66 @@ class CostEvent(Base):
         comment="Cost per unit in USD",
     )
     
+    # CALCULATED provider cost — quantity × the provider's published per-unit
+    # rate.  This is NOT an invoice amount: Google Cloud TTS bills per character
+    # against a published rate and exposes no per-request charge, so a true
+    # `actual_invoice_cost` does not exist for us to store.  Do not present this
+    # figure as billed spend; it is our own arithmetic on published rates.
     total_cost = Column(
         Float,
         nullable=False,
         default=0.0,
-        comment="Total cost in USD (quantity * unit_cost)",
+        comment="Calculated provider cost in USD (quantity * unit_cost) — not an invoice amount",
     )
-    
+
+    # ── Attribution (migration 031) ──────────────────────────────────────────
+    # Previously only reachable by digging through the metadata JSON, which made
+    # per-document and per-job cost queries impossible to index or aggregate.
+    document_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="Document this cost belongs to, when applicable",
+    )
+    job_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("processing_jobs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="Processing job this cost belongs to, when applicable",
+    )
+    voice_id = Column(
+        String(255),
+        nullable=True,
+        comment="TTS voice used, for per-voice cost attribution",
+    )
+
+    # ── Outcome (migration 031) ──────────────────────────────────────────────
+    # A failed provider attempt is recorded with success=False and total_cost=0:
+    # Google does not bill failed requests, and inventing a charge would be
+    # dishonest.  The row exists so failed work stays *countable* even though it
+    # is not chargeable.
+    success = Column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default="true",
+        comment="True when the provider call succeeded, False when it failed",
+    )
+    failure_reason = Column(
+        String(255),
+        nullable=True,
+        comment="Exception class name when success is 'false'",
+    )
+    attempt_number = Column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default="1",
+        comment="Provider attempt for this logical chunk (1 = first try, >1 = retry)",
+    )
+
     # Metadata
     activity_metadata = Column("metadata",
         JSON,
@@ -116,6 +170,10 @@ class CostEvent(Base):
         Index("idx_user_created", "user_id", "created_at"),
         Index("idx_event_type_created", "event_type", "created_at"),
         Index("idx_provider_created", "provider", "created_at"),
+        # Drives the failed-spend and retry reports (migration 031).  Declared
+        # here too, or metadata.create_all() — which builds the test schema —
+        # would produce a database the migration chain never agrees with.
+        Index("idx_cost_events_success_created", "success", "created_at"),
     )
     
     def __repr__(self) -> str:

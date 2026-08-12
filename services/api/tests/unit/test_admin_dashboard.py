@@ -99,7 +99,7 @@ async def test_get_kpis_calculates_mrr_from_plan_distribution():
         5,     # active 7d
         20,    # active 30d
         # plan_rows via execute() → not scalar
-        0,     # monthly_cost (sum estimated_cost_usd)
+        # monthly_cost via CostTracker → execute(), not scalar
         50,    # audiobooks_generated
         # ls stats via execute() → not scalar
         0,     # quota_exceeded
@@ -188,7 +188,7 @@ async def test_get_kpis_gross_margin_calculation():
     mock_ls_result = MagicMock()
     mock_ls_result.one.return_value = ls_row
 
-    scalar_values = [10, 5, 8, 29.0, 5, 0, 0, 0]
+    scalar_values = [10, 5, 8, 5, 0, 0, 0]
     scalar_call = 0
 
     async def mock_scalar(stmt):
@@ -210,7 +210,13 @@ async def test_get_kpis_gross_margin_calculation():
     db.scalar  = mock_scalar
     db.execute = mock_execute
 
-    result = await DashboardService.get_kpis(db)
+    # Spend comes from the cost ledger, not from job estimates.
+    with patch(
+        "app.analytics.dashboard_service.CostTracker.get_system_cost_trend",
+        new_callable=AsyncMock,
+        return_value=[{"date": "2026-08-01", "cost": 29.0}],
+    ):
+        result = await DashboardService.get_kpis(db)
 
     mrr   = 290.0
     costs = 29.0

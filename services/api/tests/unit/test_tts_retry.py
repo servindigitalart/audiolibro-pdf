@@ -135,8 +135,11 @@ async def test_permanent_failure_is_not_retried(error):
 # ── Cost is recorded once per delivered chunk, not once per attempt ───────────
 
 @pytest.mark.asyncio
-async def test_failed_attempts_do_not_record_cost():
-    """Google does not bill a 503, so neither should the cost ledger."""
+async def test_retried_chunk_is_charged_exactly_once():
+    """
+    Two failed attempts then success writes three ledger rows, but only the
+    successful one carries cost.  A retry must never become a second charge.
+    """
     provider = FlakyProvider([_net_error(), _net_error()])
 
     with patch(
@@ -144,7 +147,70 @@ async def test_failed_attempts_do_not_record_cost():
     ) as mock_track:
         await _synthesize(provider)
 
-    assert mock_track.await_count == 1
+    calls = [c.kwargs for c in mock_track.await_args_list]
+    charged = [c for c in calls if c["success"]]
+    failed = [c for c in calls if not c["success"]]
+
+    assert len(charged) == 1, "the delivered chunk must be charged exactly once"
+    assert len(failed) == 2, "failed attempts must stay countable"
+    # The charge records which attempt finally delivered it.
+    assert charged[0]["attempt_number"] == 3
+
+
+@pytest.mark.asyncio
+async def test_failed_attempts_are_recorded_with_attribution():
+    """A failed attempt is countable: reason, attempt number, and job/document."""
+    provider = FlakyProvider([_net_error(), _net_error()])
+    doc_id, job_id = uuid4(), uuid4()
+
+    with patch(
+        "app.services.tts.tts_service.CostTracker.track_event", new_callable=AsyncMock
+    ) as mock_track:
+        with patch("app.services.tts.tts_service.asyncio.sleep", new_callable=AsyncMock):
+            service = TTSService(provider=provider)
+            await service.synthesize_text(
+                db=AsyncMock(), user_id=uuid4(), text="Hello",
+                voice_id="en-US-Neural2-A", language_code="en-US",
+                document_id=doc_id, job_id=job_id,
+            )
+
+    failed = [c.kwargs for c in mock_track.await_args_list if not c.kwargs["success"]]
+    assert [f["attempt_number"] for f in failed] == [1, 2]
+    assert all(f["failure_reason"] == "TTSNetworkError" for f in failed)
+    assert all(f["document_id"] == doc_id and f["job_id"] == job_id for f in failed)
+
+
+@pytest.mark.asyncio
+async def test_permanent_failure_is_recorded_once():
+    """A fail-fast error still leaves one countable record."""
+    provider = FlakyProvider([TTSInvalidInputError("text too long", provider="fake")])
+
+    with patch(
+        "app.services.tts.tts_service.CostTracker.track_event", new_callable=AsyncMock
+    ) as mock_track:
+        with pytest.raises(TTSInvalidInputError):
+            await _synthesize(provider)
+
+    calls = [c.kwargs for c in mock_track.await_args_list]
+    assert len(calls) == 1
+    assert calls[0]["success"] is False
+    assert calls[0]["failure_reason"] == "TTSInvalidInputError"
+
+
+@pytest.mark.asyncio
+async def test_ledger_failure_does_not_mask_the_tts_error():
+    """
+    If the cost write itself fails, the caller must still see the TTS error —
+    a broken ledger cannot become a broken pipeline.
+    """
+    provider = FlakyProvider([TTSInvalidInputError("bad input", provider="fake")])
+
+    with patch(
+        "app.services.tts.tts_service.CostTracker.track_event",
+        new_callable=AsyncMock, side_effect=RuntimeError("ledger down"),
+    ):
+        with pytest.raises(TTSInvalidInputError):
+            await _synthesize(provider)
 
 
 # ── No job-level auto-retry ───────────────────────────────────────────────────

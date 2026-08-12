@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.financial.quota.quota_limits import PlanTier, PLAN_QUOTAS, get_plan_limits
 from app.financial.quota.quota_service import QuotaService
+from app.pricing.unit_economics import tts_cost_for_voice
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +113,9 @@ class PreflightAnalysis:
     chars_remaining_after: int  # can be negative if over quota
     plan_tier: str
     plan_display_name: str
+    # Provider cost we expect to incur to produce this audiobook.  Internal
+    # transparency, not a charge to the user — nobody is billed this amount.
+    estimated_provider_cost_usd: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -193,6 +197,7 @@ class PreflightService:
             chars_remaining_after=chars_remaining_after,
             plan_tier=plan_tier_str,
             plan_display_name=PLAN_DISPLAY_MAP.get(plan_tier_str, plan_tier_str),
+            estimated_provider_cost_usd=round(tts_cost_for_voice(chars, voice_id), 4),
         )
 
     # -- Pure estimation helpers (also used by tests) -----------------------

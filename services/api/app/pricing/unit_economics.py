@@ -65,6 +65,46 @@ COST_RATES = UnitCostRates()
 CHARS_PER_LISTENING_HOUR: int = 50_000
 
 
+# ── Voice-aware provider cost ─────────────────────────────────────────────────
+# Google prices per voice *family*, not per plan tier.  `user_cost()` below
+# picks the rate from the user's tier, which is the modelled assumption
+# (FREE/BASIC "should" use Standard voices) — but the worker sends whatever
+# voice the language detector or the user picked, and every voice in VOICE_MAP
+# is currently Neural2.  Estimating from the tier therefore under-states a FREE
+# user's real cost by 4×.  These helpers price the voice actually being used.
+#
+# Google exposes no per-request invoice amount, only published per-character
+# rates.  Everything here is a *calculated* provider cost, never an invoice.
+
+_PREMIUM_VOICE_MARKERS = ("neural", "wavenet", "studio", "journey", "polyglot", "chirp")
+
+
+def is_premium_voice(voice_id: str | None) -> bool:
+    """True when *voice_id* bills at the premium (Neural2/WaveNet/Studio) rate."""
+    if not voice_id:
+        # Unknown voice → assume the expensive rate.  Over-estimating spend is
+        # the safe direction for a guard that decides whether to spend money.
+        return True
+    return any(marker in voice_id.lower() for marker in _PREMIUM_VOICE_MARKERS)
+
+
+def tts_cost_for_voice(
+    characters: int,
+    voice_id: str | None,
+    rates: UnitCostRates = COST_RATES,
+) -> float:
+    """
+    Marginal provider cost of synthesizing *characters* with *voice_id*, in USD.
+
+    Marginal means TTS only: no storage, bandwidth, or the per-user monthly
+    infra overhead that `user_cost()` folds in.  Adding a $0.15/month overhead
+    to a single job would make a 1,000-character job look like it cost $0.15
+    when the provider charge is $0.016.
+    """
+    rate = rates.tts_neural_per_char if is_premium_voice(voice_id) else rates.tts_standard_per_char
+    return max(0, characters) * rate
+
+
 # ── Per-request cost calculation ──────────────────────────────────────────────
 
 @dataclass
