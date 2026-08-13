@@ -171,11 +171,11 @@ _ELLIPSIS_LONG = re.compile(r'\.{4,}')                  # ....
 # replaced with a non-breaking space so downstream splitters skip it).
 # We use   (NBSP) after the abbreviation — it looks like whitespace to
 # humans but is not matched by \s in Python regex (by default), so the
-# TextSegmenter's sentence-ending pattern won't fire.
+# chunker's sentence-ending pattern won't fire.
 _ABBREVIATIONS = [
     # Pattern consumes "Abbrev. " (period + space) → replacement is "Abbrev "
     # so there is exactly one space in the result and no stray period that would
-    # trigger a sentence-split in the TextSegmenter.
+    # trigger a sentence-split in the chunker.
     # Titles — English
     (re.compile(r'\bDr\.\s', re.UNICODE), 'Dr '),
     (re.compile(r'\bMr\.\s', re.UNICODE), 'Mr '),
@@ -478,7 +478,7 @@ def normalize_for_narration(text: str) -> str:
 
     Additional rules:
       A  → em/en dash → spaced dash for natural TTS pause
-      B  → abbreviation safety (prevent false sentence splits in segmenter)
+      B  → abbreviation safety (prevent false sentence splits in the chunker)
       C  → numbered/bulleted list readability
 
     This pass is optional.  Use it when the output goes directly to a TTS
@@ -491,7 +491,9 @@ def normalize_for_narration(text: str) -> str:
     text = _EM_DASH_SPACING.sub(' — ', text)
 
     # Rule B: abbreviations — replace trailing period with NBSP so the
-    # TextSegmenter's sentence-ending regex (\.) does not split here
+    # chunker's sentence-ending regex (\.) does not split here
+    # ("the chunker" = _chunk_text in app/tasks/processing.py — the only text
+    #  splitter in the pipeline)
     for pattern, replacement in _ABBREVIATIONS:
         text = pattern.sub(replacement, text)
 

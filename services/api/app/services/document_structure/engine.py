@@ -27,7 +27,6 @@ from app.services.document_structure.extractors.toc_extractor import TOCExtracto
 from app.services.document_structure.extractors.heuristic_detector import HeuristicDetector
 from app.services.document_structure.extractors.structural_analyzer import StructuralAnalyzer
 from app.services.document_structure.fusion.confidence_scorer import ConfidenceScorer
-from app.services.document_structure.segmenter import TextSegmenter
 from app.services.document_structure.exceptions import (
     DocumentStructureError,
     PDFExtractionError,
@@ -77,7 +76,10 @@ class DocumentStructureEngine:
     3. Confidence fusion
     4. Coverage validation (NEW: rejects tiny/TOC-only results)
     5. Chapter persistence
-    6. Text segmentation
+
+    Splitting chapter text into TTS-sized chunks is NOT done here — the worker
+    owns that (`_chunk_text` in `app/tasks/processing.py`), because the chunk
+    ceiling is a property of the TTS provider, not of the document.
     """
 
     def __init__(self):
@@ -86,7 +88,6 @@ class DocumentStructureEngine:
         self.heuristic_detector = HeuristicDetector()
         self.structural_analyzer = StructuralAnalyzer()
         self.confidence_scorer = ConfidenceScorer()
-        self.segmenter = TextSegmenter()
 
     async def analyze_document(
         self,

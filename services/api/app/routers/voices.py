@@ -3,16 +3,27 @@ Voice Preview Router
 ====================
 Lightweight endpoint for generating short TTS preview samples.
 
-Each voice+language combination is synthesized once per server process
+Each voice+language+style combination is synthesized once per server process
 and the audio bytes are cached in memory. Subsequent calls skip TTS
 entirely and serve the cached bytes directly.
 
 Intentionally bypasses Celery, quota tracking, and cost events:
 previews use a fixed ~90-char text that costs <$0.002 per voice,
 are globally cached, and are not attributed to user quota.
+
+That bypass is only defensible while the number of *distinct* paid calls a
+caller can force stays small, which is what the two guards below protect
+(Phase 0E / audit 0.9):
+
+  - the route carries the API rate-limit tier, so previews are bounded per user
+    like any other authenticated endpoint;
+  - the cache is keyed on the RESOLVED style parameters and bounded by an LRU,
+    so junk `narration_style` values can neither mint unlimited provider calls
+    nor grow the process heap without limit.
 """
 
 import asyncio
+from collections import OrderedDict
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -21,9 +32,11 @@ from fastapi.responses import Response
 from app.core.logging_config import get_logger
 from app.core.auth_dependencies import get_current_active_user
 from app.db.models.user import User
+from app.financial.rate_limit.dependencies import rate_limit
+from app.financial.rate_limit.rate_limit_service import RateLimitTier
 from app.services.tts.google_provider import GoogleTTSProvider
 from app.services.tts.base import TTSProviderError
-from app.services.tts.narration_style import get_style_params
+from app.services.tts.narration_style import StyleParams, get_style_params
 
 logger = get_logger(__name__)
 
@@ -44,9 +57,31 @@ _PREVIEW_TEXTS: dict[str, str] = {
 }
 _DEFAULT_PREVIEW_TEXT = _PREVIEW_TEXTS["en"]
 
-# Global cache: "voice_id:language_code:style" → MP3 bytes
-_cache: dict[str, bytes] = {}
+# Global cache: resolved-parameter key → MP3 bytes.
+#
+# Bounded LRU rather than a plain dict.  Keying on the resolved StyleParams (see
+# _cache_key) already collapses every unknown narration_style onto the default
+# entry, but voice_id remains caller-supplied and Google publishes ~1600 voices,
+# so the dict still needs a ceiling.  A preview is ~30-90 KB, so 128 entries is
+# roughly 4-12 MB — small enough to keep per worker process, large enough that
+# the voices real users pick stay warm.
+_CACHE_MAX_ENTRIES = 128
+_cache: "OrderedDict[str, bytes]" = OrderedDict()
 _cache_lock = asyncio.Lock()
+
+
+def _cache_key(voice_id: str, language_code: str, params: StyleParams) -> str:
+    """
+    Build the cache key from the *resolved* synthesis parameters.
+
+    The raw narration_style string must never reach the key: get_style_params
+    maps every unrecognised style to DEFAULT_PARAMS, so `?narration_style=foo`,
+    `=bar` and `=baz` all synthesize byte-identical audio.  Keying on the raw
+    string gave each of them its own miss, its own paid provider call and its
+    own cache entry — unbounded work from unbounded input.  Two requests that
+    would produce the same audio now produce the same key.
+    """
+    return f"{voice_id}:{language_code}:{params.speaking_rate}:{params.pitch}"
 
 
 def _derive_language_code(voice_id: str, fallback: str) -> str:
@@ -64,7 +99,13 @@ def _derive_language_code(voice_id: str, fallback: str) -> str:
     return fallback
 
 
-@router.get("/preview")
+@router.get(
+    "/preview",
+    # Previews call a paid provider outside the cost guard and the cost ledger,
+    # so the rate limit is the only ceiling on how often that can happen.
+    # Declared on the route, not in the body, so it cannot be skipped.
+    dependencies=[Depends(rate_limit(RateLimitTier.API))],
+)
 async def preview_voice(
     voice_id:        str,
     language_code:   str = "en-US",
@@ -82,13 +123,14 @@ async def preview_voice(
     # Always derive the full BCP-47 code from the voice_id so Google TTS never
     # receives a mismatched pair (e.g. language_code='es' with voice 'es-US-Neural2-A').
     language_code = _derive_language_code(voice_id, language_code)
-    cache_key    = f"{voice_id}:{language_code}:{narration_style or ''}"
+    cache_key    = _cache_key(voice_id, language_code, style_params)
     lang_short   = language_code[:2].lower()
     text         = _PREVIEW_TEXTS.get(lang_short, _DEFAULT_PREVIEW_TEXT)
 
     # Fast path — return cached bytes without hitting TTS API
     async with _cache_lock:
         if cache_key in _cache:
+            _cache.move_to_end(cache_key)  # mark as recently used
             return Response(content=_cache[cache_key], media_type="audio/mpeg")
 
     # Slow path — synthesize and cache
@@ -113,6 +155,9 @@ async def preview_voice(
 
         async with _cache_lock:
             _cache[cache_key] = audio_bytes
+            _cache.move_to_end(cache_key)
+            while len(_cache) > _CACHE_MAX_ENTRIES:
+                _cache.popitem(last=False)  # evict least recently used
 
         logger.info(
             "voice_preview_style_applied",
