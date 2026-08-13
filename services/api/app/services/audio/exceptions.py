@@ -1,24 +1,16 @@
 """
 Audio Processing Exceptions
 ============================
-BLOCK 6C: Audio Assembly & Output Layer
+Raised by the ID3 tagging path (`metadata.py`).
 
-Custom exceptions for audio processing operations.
+The assembly and normalization exceptions that used to live here went with
+their modules in Phase 0D.  AudioProcessingError stays as the shared base the
+three below inherit from.
 """
 
 
 class AudioProcessingError(Exception):
     """Base exception for audio processing errors."""
-    pass
-
-
-class AudioAssemblyError(AudioProcessingError):
-    """Exception raised during audio concatenation."""
-    pass
-
-
-class AudioNormalizationError(AudioProcessingError):
-    """Exception raised during audio normalization."""
     pass
 
 
@@ -34,9 +26,4 @@ class InvalidAudioFileError(AudioProcessingError):
 
 class AudioFileNotFoundError(AudioProcessingError):
     """Exception raised when audio file is not found."""
-    pass
-
-
-class BitrateInconsistencyError(AudioAssemblyError):
-    """Exception raised when chapter bitrates don't match."""
     pass

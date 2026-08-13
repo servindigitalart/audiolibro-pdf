@@ -1,35 +1,25 @@
 """
 Audio Processing Module
 =======================
-BLOCK 6C: Audio Assembly & Output Layer
+ID3 tagging for the assembled audiobook.
 
-Provides audio concatenation, normalization, and metadata tagging
-for final audiobook generation.
-
-Components:
-- AudioAssembler: Concatenate chapter MP3 files
-- AudioNormalizer: Normalize loudness and trim silence
-- AudioMetadataWriter: Add ID3 tags
+Concatenation lives in the worker (`_ffmpeg_concat` — the ffmpeg concat demuxer,
+which keeps no audio in RAM); the pydub-based AudioAssembler and AudioNormalizer
+that used to live here were never called by it and were deleted in Phase 0D.
+Loudness normalization is a Phase 2 item (audit 2.4, audio mastering) and will
+be built as an ffmpeg filter, not resurrected from pydub.
 """
 
-from app.services.audio.assembler import AudioAssembler
-from app.services.audio.normalizer import AudioNormalizer
 from app.services.audio.metadata import AudioMetadataWriter
 from app.services.audio.exceptions import (
-    AudioProcessingError,
-    AudioAssemblyError,
-    AudioNormalizationError,
+    AudioFileNotFoundError,
     AudioMetadataError,
     InvalidAudioFileError,
 )
 
 __all__ = [
-    "AudioAssembler",
-    "AudioNormalizer",
     "AudioMetadataWriter",
-    "AudioProcessingError",
-    "AudioAssemblyError",
-    "AudioNormalizationError",
+    "AudioFileNotFoundError",
     "AudioMetadataError",
     "InvalidAudioFileError",
 ]

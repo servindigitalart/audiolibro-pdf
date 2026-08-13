@@ -72,7 +72,10 @@ class Settings(BaseSettings):
     feature_email_verification: bool = Field(
         default=False, description="Enable email verification"
     )
-    feature_rate_limiting: bool = Field(default=False, description="Enable rate limiting")
+    # ON by default (F-29): a limit that ships disabled is not a limit. Safe to
+    # enable — the UPLOAD tier sits far above human use and fails open if Redis
+    # is unreachable.
+    feature_rate_limiting: bool = Field(default=True, description="Enable rate limiting")
     feature_document_upload: bool = Field(default=False, description="Enable document upload")
     feature_tts_processing: bool = Field(default=False, description="Enable TTS processing")
     feature_stripe_billing: bool = Field(default=False, description="Enable Stripe billing")

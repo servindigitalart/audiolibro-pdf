@@ -60,6 +60,8 @@ from app.services.storage_service import get_storage_service
 from app.services.preflight_service import PreflightService
 from app.schemas.processing import ProcessDocumentRequest
 from app.schemas.document import PreflightResult
+from app.financial.rate_limit.dependencies import rate_limit
+from app.financial.rate_limit.rate_limit_service import RateLimitTier
 from app.financial.financial_metrics import (
     documents_uploaded_total,
     documents_failed_total,
@@ -102,7 +104,10 @@ router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
     - Document is not processed immediately
     - Use processing endpoints to queue for TTS conversion
     - All uploads are tracked for cost governance
-    """
+    """,
+    # Abuse ceiling in front of the money (F-29).  Independent of the Phase 0C
+    # cost guard, which bounds spend per job and per month; this bounds rate.
+    dependencies=[Depends(rate_limit(RateLimitTier.UPLOAD))],
 )
 async def upload_document(
     file: UploadFile = File(..., description="PDF file to upload"),
@@ -616,6 +621,7 @@ async def rename_document_title(
     status_code=status.HTTP_201_CREATED,
     summary="Start Document Processing",
     description="Create a processing job for a document (called after user reviews preflight analysis).",
+    dependencies=[Depends(rate_limit(RateLimitTier.UPLOAD))],
 )
 async def start_document_processing(
     document_id: UUID,
@@ -670,6 +676,7 @@ async def start_document_processing(
     status_code=status.HTTP_201_CREATED,
     summary="Retry Failed Document",
     description="Create a new processing job for a previously failed document.",
+    dependencies=[Depends(rate_limit(RateLimitTier.UPLOAD))],
 )
 async def retry_document_processing(
     document_id: UUID,
