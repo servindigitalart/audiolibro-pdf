@@ -10,6 +10,7 @@ and produces a unified, high-confidence chapter list.
 import logging
 from typing import List
 
+from app.services.document_structure.classification import describes_same_chapter
 from app.services.document_structure.models import DetectedChapter
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,14 @@ logger = logging.getLogger(__name__)
 # Two detections describe the *same* chapter when their start pages are this
 # close.  Detectors disagree by at most a page (PDF outline targets the chapter
 # page, the heuristic finds the heading on the following page).
+#
+# Phase 1.1: the tolerance alone was too permissive.  It also merged a Part
+# divider (or an Acknowledgements page) with the chapter starting on the next
+# page, yielding a chapter that began a page early and inherited the wrong
+# title — measured on three golden-corpus fixtures.  A cross-page merge now
+# additionally requires the two headings to name the same chapter; a same-page
+# merge does not, since two detectors firing on one page cannot mean two
+# chapters.
 _SAME_CHAPTER_PAGE_TOLERANCE = 1
 
 # Detection methods that come from the same detector.  A single detector never
@@ -146,10 +155,18 @@ class ConfidenceScorer:
         for detection in sorted_detections[1:]:
             current_group = groups[-1]
             anchor = current_group[0]
+            page_gap = detection.start_page - anchor.start_page
 
             same_chapter = (
-                detection.start_page - anchor.start_page <= _SAME_CHAPTER_PAGE_TOLERANCE
+                page_gap <= _SAME_CHAPTER_PAGE_TOLERANCE
                 and all(_family(d) != _family(detection) for d in current_group)
+                and (
+                    page_gap == 0
+                    or any(
+                        describes_same_chapter(d.title, detection.title)
+                        for d in current_group
+                    )
+                )
             )
 
             if same_chapter:

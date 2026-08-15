@@ -26,6 +26,7 @@ from app.services.document_structure.models import (
 from app.services.document_structure.extractors.toc_extractor import TOCExtractor
 from app.services.document_structure.extractors.heuristic_detector import HeuristicDetector
 from app.services.document_structure.extractors.structural_analyzer import StructuralAnalyzer
+from app.services.document_structure.classification import is_non_chapter_heading
 from app.services.document_structure.fusion.confidence_scorer import ConfidenceScorer
 from app.services.document_structure.exceptions import (
     DocumentStructureError,
@@ -133,6 +134,7 @@ class DocumentStructureEngine:
                 fused_chapters = self._create_fallback_chapter(pages, total_pages)
                 fallback_reason = "no_detections"
             else:
+                fused_chapters = self._absorb_non_chapters(fused_chapters, document_id)
                 methods = {c.detection_method for c in fused_chapters}
                 avg_conf = sum(c.confidence for c in fused_chapters) / len(fused_chapters)
                 logger.info(
@@ -206,6 +208,67 @@ class DocumentStructureEngine:
                 message=f"Analysis failed: {str(e)}",
                 document_id=str(document_id)
             )
+
+    # ── Non-chapter absorption ────────────────────────────────────────────────
+
+    def _absorb_non_chapters(
+        self,
+        chapters: List[DetectedChapter],
+        document_id: UUID,
+    ) -> List[DetectedChapter]:
+        """
+        Fold Part dividers and front/back matter into the neighbouring chapter.
+
+        A "PARTE II" divider page and an "Acknowledgements" page are typeset
+        exactly like a chapter opening, so the structural detector finds them
+        and they arrive here as chapters.  Listing them as chapters gives the
+        listener a five-second track called "PARTE II" between real chapters.
+
+        They are absorbed rather than dropped: the pages hold real text, and
+        losing text silently is worse than narrating a divider.  The pages join
+        the *following* chapter (dividers and front matter introduce what comes
+        next), or the preceding one when nothing follows (back matter).
+
+        If every chapter looks like a non-chapter, the list is returned intact —
+        an empty chapter list is never an improvement.
+        """
+        # Identity, not equality: DetectedChapter is a plain dataclass, so two
+        # chapters with the same fields compare equal and `in` would drop the
+        # wrong one.
+        keep_ids = {
+            id(c) for c in chapters if not is_non_chapter_heading(c.title)
+        }
+        if not keep_ids or len(keep_ids) == len(chapters):
+            return chapters
+
+        keep = [c for c in chapters if id(c) in keep_ids]
+        absorbed = [c for c in chapters if id(c) not in keep_ids]
+
+        # Targets are chosen from the ORIGINAL start pages.  Reading start_page
+        # live would let the first absorption move a chapter backwards and so
+        # disqualify it as the target for the second, pushing that one onto the
+        # chapter after it and producing overlapping ranges.
+        original_start = {id(c): c.start_page for c in chapters}
+
+        for chapter in absorbed:
+            following = [
+                c for c in keep
+                if original_start[id(c)] > original_start[id(chapter)]
+            ]
+            if following:
+                target = min(following, key=lambda c: original_start[id(c)])
+                target.start_page = min(target.start_page, chapter.start_page)
+            else:
+                target = max(keep, key=lambda c: original_start[id(c)])
+                target.end_page = max(target.end_page, chapter.end_page)
+
+        keep.sort(key=lambda c: c.start_page)
+
+        logger.info(
+            "[SONORO] non_chapters_absorbed document_id=%s count=%d titles=%s",
+            document_id, len(absorbed), [c.title[:40] for c in absorbed],
+        )
+        return keep
 
     # ── Coverage validation ───────────────────────────────────────────────────
 
