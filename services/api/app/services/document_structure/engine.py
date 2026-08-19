@@ -13,7 +13,6 @@ import time
 from typing import List, Optional
 from uuid import UUID
 
-import fitz  # PyMuPDF
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,7 +25,10 @@ from app.services.document_structure.models import (
 from app.services.document_structure.extractors.toc_extractor import TOCExtractor
 from app.services.document_structure.extractors.heuristic_detector import HeuristicDetector
 from app.services.document_structure.extractors.structural_analyzer import StructuralAnalyzer
-from app.services.document_structure.classification import is_non_chapter_heading
+from app.services.document_structure.classification import (
+    describes_same_chapter,
+    is_non_chapter_heading,
+)
 from app.services.document_structure.fusion.confidence_scorer import ConfidenceScorer
 from app.services.document_structure.exceptions import (
     DocumentStructureError,
@@ -111,6 +113,7 @@ class DocumentStructureEngine:
             pages = await self._extract_pages(pdf_path)
             total_pages = len(pages)
             total_chars = sum(p.char_count for p in pages)
+            doc_text, page_offsets = _build_document_text(pages)
 
             logger.info(
                 "[SONORO] pdf_extracted document_id=%s pages=%d chars=%d",
@@ -131,7 +134,7 @@ class DocumentStructureEngine:
                     "[SONORO] chapter_detection_no_results document_id=%s — length_fallback",
                     document_id,
                 )
-                fused_chapters = self._create_fallback_chapter(pages, total_pages)
+                fused_chapters = self._create_fallback_chapter(total_pages, len(doc_text))
                 fallback_reason = "no_detections"
             else:
                 fused_chapters = self._absorb_non_chapters(fused_chapters, document_id)
@@ -144,8 +147,8 @@ class DocumentStructureEngine:
                 fallback_reason = None
 
             # Step 4: Extract text for each chapter
-            chapters_with_text = await self._extract_chapter_text(
-                fused_chapters, pdf_path
+            chapters_with_text = self._extract_chapter_text(
+                fused_chapters, doc_text, page_offsets
             )
 
             # Step 5: Coverage validation — discard weak detections that cover only
@@ -154,7 +157,7 @@ class DocumentStructureEngine:
                 chapters=chapters_with_text,
                 total_chars=total_chars,
                 total_pages=total_pages,
-                pages=pages,
+                doc_text=doc_text,
                 existing_fallback_reason=fallback_reason,
             )
 
@@ -277,7 +280,7 @@ class DocumentStructureEngine:
         chapters: List[DetectedChapter],
         total_chars: int,
         total_pages: int,
-        pages: List[PageText],
+        doc_text: str,
         existing_fallback_reason: Optional[str],
     ) -> tuple[List[DetectedChapter], Optional[str]]:
         """
@@ -334,17 +337,13 @@ class DocumentStructureEngine:
                 "reason=%s — creating full-document chapter",
                 fallback_reason,
             )
-            fallback = self._create_fallback_chapter(pages, total_pages)
-            fallback_with_text = None  # caller extracts text below
-            # Re-extract text for the full-document fallback synchronously
-            # (we can't await here — use the sync text already in `pages`)
-            full_text = "\n".join(p.text for p in pages)
-            normalized, norm_stats = normalize_with_stats(full_text)
+            fallback = self._create_fallback_chapter(total_pages, len(doc_text))
+            normalized, _ = normalize_with_stats(doc_text)
             fallback[0].text_content = normalized
             fallback[0].char_count = len(normalized)
             logger.info(
                 "[SONORO] fallback_chapter_text chars=%d (normalized from raw=%d)",
-                fallback[0].char_count, len(full_text),
+                fallback[0].char_count, len(doc_text),
             )
             return fallback, fallback_reason
 
@@ -398,52 +397,68 @@ class DocumentStructureEngine:
 
         return results
 
-    async def _extract_chapter_text(
+    def _extract_chapter_text(
         self,
         chapters: List[DetectedChapter],
-        pdf_path: str
+        doc_text: str,
+        page_offsets: List[int],
     ) -> List[DetectedChapter]:
-        """Extract and normalize full text for each chapter."""
-        try:
-            doc = fitz.open(pdf_path)
+        """
+        Give every chapter its text, sliced at character boundaries.
 
-            for chapter in chapters:
-                text = ""
-                for page_num in range(chapter.start_page - 1, chapter.end_page):
-                    if page_num < len(doc):
-                        text += doc[page_num].get_text()
+        A chapter's extent used to be a page range, which forced two untruths:
+        a chapter that opens halfway down a page had to swallow whatever came
+        before it, and two chapters that open on the *same* page both claimed
+        that page — so its text was narrated twice.  Boundaries are characters
+        now: each chapter starts where its heading is printed and ends where
+        the next one starts, so the slices tile the document exactly once.
 
-                raw_text = text.strip()
-                normalized, norm_stats = normalize_with_stats(raw_text)
-                chapter.text_content = normalized
-                chapter.char_count = len(chapter.text_content)
-
-                logger.info(
-                    "[SONORO] chapter_normalized chapter=%s "
-                    "raw_chars=%d normalized_chars=%d "
-                    "line_repairs=%d hyphen_repairs=%d "
-                    "headers_removed=%d ocr_removed=%d",
-                    chapter.title,
-                    norm_stats.input_chars,
-                    norm_stats.output_chars,
-                    norm_stats.line_break_repairs,
-                    norm_stats.hyphen_repairs,
-                    norm_stats.headers_removed,
-                    norm_stats.ocr_artifacts_removed,
-                )
-
-                if chapter.text_content:
-                    preview = chapter.text_content[:500]
-                    if len(chapter.text_content) > 500:
-                        preview += "..."
-                    chapter.text_preview = preview
-
-            doc.close()
+        Page numbers are untouched; they remain the reader-facing location.
+        """
+        if not chapters:
             return chapters
 
-        except Exception as e:
-            logger.error(f"Chapter text extraction failed: {str(e)}")
-            return chapters
+        # Later chapters cannot start before earlier ones: a heading search that
+        # lands badly must not invert the document.
+        floor = 0
+        for chapter in chapters:
+            chapter.start_char = max(_locate_heading(chapter, doc_text, page_offsets), floor)
+            floor = chapter.start_char
+
+        for i, chapter in enumerate(chapters):
+            chapter.end_char = (
+                chapters[i + 1].start_char if i + 1 < len(chapters) else len(doc_text)
+            )
+
+            raw_text = doc_text[chapter.start_char:chapter.end_char].strip()
+            normalized, norm_stats = normalize_with_stats(raw_text)
+            chapter.text_content = normalized
+            chapter.char_count = len(normalized)
+
+            logger.info(
+                "[SONORO] chapter_normalized chapter=%s "
+                "start_char=%d end_char=%d "
+                "raw_chars=%d normalized_chars=%d "
+                "line_repairs=%d hyphen_repairs=%d "
+                "headers_removed=%d ocr_removed=%d",
+                chapter.title,
+                chapter.start_char,
+                chapter.end_char,
+                norm_stats.input_chars,
+                norm_stats.output_chars,
+                norm_stats.line_break_repairs,
+                norm_stats.hyphen_repairs,
+                norm_stats.headers_removed,
+                norm_stats.ocr_artifacts_removed,
+            )
+
+            if chapter.text_content:
+                preview = chapter.text_content[:500]
+                if len(chapter.text_content) > 500:
+                    preview += "..."
+                chapter.text_preview = preview
+
+        return chapters
 
     async def _persist_chapters(
         self,
@@ -496,8 +511,8 @@ class DocumentStructureEngine:
 
     def _create_fallback_chapter(
         self,
-        pages: List[PageText],
-        total_pages: int
+        total_pages: int,
+        total_chars: int,
     ) -> List[DetectedChapter]:
         """
         Create a single chapter covering the entire document.
@@ -512,7 +527,9 @@ class DocumentStructureEngine:
                 start_page=1,
                 end_page=total_pages,
                 confidence=0.5,
-                detection_method="length_fallback"
+                detection_method="length_fallback",
+                start_char=0,
+                end_char=total_chars,
             )
         ]
 
@@ -526,3 +543,56 @@ class DocumentStructureEngine:
             if result:
                 methods.update(ch.detection_method for ch in result)
         return sorted(methods)
+
+
+# ── Document text ─────────────────────────────────────────────────────────────
+# One string for the whole document, plus where each page begins in it.  The
+# detectors already read these pages; reusing their text (rather than reopening
+# the PDF) keeps the text a chapter is narrated from identical to the text its
+# heading was found in, and saves a second full read of a file that can be 50 MB.
+
+_PAGE_SEPARATOR = "\n"
+
+
+def _build_document_text(pages: List[PageText]) -> tuple[str, List[int]]:
+    """Return the concatenated document text and each page's start offset."""
+    offsets: List[int] = []
+    cursor = 0
+    for page in pages:
+        offsets.append(cursor)
+        cursor += len(page.text) + len(_PAGE_SEPARATOR)
+    return _PAGE_SEPARATOR.join(p.text for p in pages), offsets
+
+
+def _locate_heading(
+    chapter: DetectedChapter,
+    doc_text: str,
+    page_offsets: List[int],
+) -> int:
+    """
+    Character offset where *chapter* begins in *doc_text*.
+
+    The heading is searched for only within the chapter's own start page: a
+    chapter title also appears in the printed table of contents, and a
+    document-wide search would find that copy instead of the chapter.
+
+    Falls back to the start of the page — the pre-C2 behaviour — when the
+    printed heading cannot be matched, which happens whenever a PDF outline
+    words an entry differently from the page it points at.
+    """
+    index = chapter.start_page - 1
+    if not 0 <= index < len(page_offsets):
+        return 0
+
+    page_start = page_offsets[index]
+    page_end = (
+        page_offsets[index + 1] if index + 1 < len(page_offsets) else len(doc_text)
+    )
+
+    cursor = page_start
+    for line in doc_text[page_start:page_end].splitlines(keepends=True):
+        if line.strip() and describes_same_chapter(line, chapter.title):
+            return cursor
+        cursor += len(line)
+
+    return page_start

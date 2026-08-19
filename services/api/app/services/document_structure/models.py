@@ -28,6 +28,12 @@ class DetectedChapter:
     detection_method: str
     text_content: Optional[str] = None
     char_count: int = 0
+    # Extent in the document text, in characters.  Pages locate a chapter for
+    # the reader; characters locate it for the narrator.  A page range cannot
+    # express two chapters that open on one page, and the engine assigns these
+    # before extracting text.  None until the engine has done so.
+    start_char: Optional[int] = None
+    end_char: Optional[int] = None
     
     def __post_init__(self):
         """Validate chapter data."""

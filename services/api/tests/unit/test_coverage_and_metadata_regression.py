@@ -24,6 +24,7 @@ pytestmark = pytest.mark.unit
 from app.services.document_structure.models import DetectedChapter, PageText
 from app.services.document_structure.engine import (
     DocumentStructureEngine,
+    _build_document_text,
     _MIN_COVERAGE_FRACTION,
     _LARGE_DOC_CHARS_THRESHOLD,
     _SMALL_CHAPTER_CHARS_LIMIT,
@@ -67,11 +68,12 @@ class TestCoverageValidation:
     def _validate(self, chapters, total_chars, total_pages, pages=None):
         if pages is None:
             pages = make_pages(total_pages, total_chars // max(total_pages, 1))
+        doc_text, _ = _build_document_text(pages)
         return self.engine._validate_coverage(
             chapters=chapters,
             total_chars=total_chars,
             total_pages=total_pages,
-            pages=pages,
+            doc_text=doc_text,
             existing_fallback_reason=None,
         )
 
@@ -201,13 +203,12 @@ class TestCoverageValidation:
         """If fallback was already chosen, _validate_coverage is a no-op."""
         engine = DocumentStructureEngine()
         chapter = make_chapter(char_count=100)  # Would normally trigger fallback
-        pages   = make_pages(90, chars_per_page=2200)
 
         result, reason = engine._validate_coverage(
             chapters=[chapter],
             total_chars=198_000,
             total_pages=90,
-            pages=pages,
+            doc_text=_build_document_text(make_pages(90, chars_per_page=2200))[0],
             existing_fallback_reason="no_detections",  # pre-existing
         )
 
@@ -219,16 +220,14 @@ class TestCoverageValidation:
     def test_fallback_chapter_is_labeled_complete_audiobook(self):
         """The fallback chapter must be labeled 'Complete audiobook', not 'Full Document'."""
         engine = DocumentStructureEngine()
-        pages  = make_pages(10, chars_per_page=2000)
-        result = engine._create_fallback_chapter(pages, 10)
+        result = engine._create_fallback_chapter(10, 20_000)
 
         assert len(result) == 1
         assert result[0].title == "Complete audiobook"
 
     def test_fallback_chapter_covers_all_pages(self):
         engine = DocumentStructureEngine()
-        pages  = make_pages(90, chars_per_page=2183)
-        result = engine._create_fallback_chapter(pages, 90)
+        result = engine._create_fallback_chapter(90, 196_470)
 
         assert result[0].start_page == 1
         assert result[0].end_page   == 90
